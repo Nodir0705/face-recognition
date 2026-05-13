@@ -1,0 +1,70 @@
+# Attendance system configuration
+
+camera:
+  # Pi Camera Module 3 via picamera2
+  width: 1280
+  height: 720
+  framerate: 15
+  # Region of interest (fraction of frame). Use this to ignore corners.
+  roi: [0.1, 0.1, 0.9, 0.9]
+
+recognition:
+  # InsightFace model bundle. buffalo_sc is the lightest; buffalo_s is more accurate.
+  # Pi 4 (8GB) handles buffalo_sc at ~3-4 fps. buffalo_s drops to ~1-2 fps.
+  model_pack: "buffalo_sc"
+  # Detection size — smaller is faster. 320x320 is a good Pi 4 sweet spot.
+  det_size: [320, 320]
+  # Cosine-similarity threshold for a match. Higher = stricter.
+  # 0.42 is a sensible default for ArcFace embeddings; tune after pilot.
+  match_threshold: 0.42
+  # Minimum face size in pixels — rejects far-away faces.
+  min_face_px: 80
+  # Require N consecutive matching frames before logging (debounce against false positives).
+  consecutive_frames: 3
+
+liveness:
+  enabled: true
+  # Require a blink within this many seconds of first detection.
+  blink_timeout_sec: 4
+  # Minimum pixel movement between frames — rejects static photos.
+  min_motion_px: 5
+
+attendance:
+  # Cooldown to prevent double-logging the same person.
+  # If the same person is recognized within this many seconds of their last log, ignore.
+  cooldown_sec: 300
+  # Auto-toggle in/out: first event of the day = IN, second = OUT, etc.
+  # If false, day boundary at 12:00 splits IN (morning) vs OUT (afternoon).
+  toggle_mode: true
+  # Day boundary for "first event = IN" logic (local time, 24h).
+  day_start_hour: 4
+
+google_sheets:
+  # Spreadsheet ID (the long string in the Sheets URL)
+  spreadsheet_id: "PASTE_YOUR_SPREADSHEET_ID_HERE"
+  # Worksheet/tab name where logs are appended
+  worksheet: "Attendance"
+  # Path to service-account credentials JSON
+  credentials_path: "config/credentials.json"
+  # Sync interval in seconds
+  sync_interval_sec: 30
+  # Max retries before giving up on a row (it stays queued)
+  max_retries: 5
+
+paths:
+  db: "data/attendance.db"
+  faces_dir: "data/faces"
+  logs_dir: "data/logs"
+
+display:
+  # Show welcome message on attached screen?
+  enabled: true
+  greeting_duration_sec: 3
+  language: "ko"  # ko or en
+
+privacy:
+  # Auto-delete enrollment photos after extracting embeddings.
+  # Embeddings (512 floats) cannot reconstruct the original face — PIPA-friendly.
+  delete_photos_after_enrollment: true
+  # Retain logs locally for N days, then archive.
+  local_retention_days: 90

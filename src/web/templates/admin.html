@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Admin · Attendance{% endblock %}
+{% block head %}
+<style>
+  .chart-card canvas { max-height: 220px; }
+  .toolbar { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .toolbar .form-row { margin: 0; }
+  .toolbar .form-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .toolbar input { width: 150px; }
+</style>
+{% endblock %}
+{% block body %}
+<h1>Dashboard</h1>
+<p class="muted">{{ employees|length }} active employees</p>
+
+<div class="card chart-card">
+  <h2 style="margin-top: 0;">Events per day (last 30 days)</h2>
+  <canvas id="dailyChart"></canvas>
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Export</h2>
+  <form class="toolbar" method="get" action="/api/export/csv">
+    <div class="form-row">
+      <label>From</label>
+      <input type="date" name="from">
+    </div>
+    <div class="form-row">
+      <label>To</label>
+      <input type="date" name="to">
+    </div>
+    <div class="form-row">
+      <label>Employee ID (optional)</label>
+      <input type="text" name="emp_id" placeholder="all employees">
+    </div>
+    <button>Download CSV</button>
+  </form>
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Empty range = last 30 days. Empty Employee ID = all employees.
+  </p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Employees</h2>
+  {% if employees %}
+  <table>
+    <tr><th>ID</th><th>Name</th><th>Department</th><th>Enrolled</th><th></th></tr>
+    {% for e in employees %}
+    <tr>
+      <td>{{ e.emp_id }}</td>
+      <td><a href="/employee/{{ e.emp_id }}">{{ e.name }}</a></td>
+      <td>{{ e.department or "—" }}</td>
+      <td>{{ fmt_date(e.enrolled_at) }}</td>
+      <td>
+        <button class="secondary" onclick="if(confirm('Deactivate {{ e.name }}?')) deactivate('{{ e.emp_id }}')">Deactivate</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No employees yet. <a href="/enroll">Enroll the first one →</a></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Manual entry</h2>
+  <p class="muted">For camera failures or visitors. Confidence will be marked 1.0.</p>
+  <div style="display: flex; gap: 8px; align-items: center;">
+    <input id="m-id" placeholder="Employee ID" style="flex: 1;">
+    <select id="m-type">
+      <option>IN</option><option>OUT</option>
+    </select>
+    <button onclick="manual()">Log</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Recent logs</h2>
+  {% if logs %}
+  <table>
+    <tr><th>Time</th><th>Employee</th><th>Event</th><th>Conf.</th><th>Sync</th></tr>
+    {% for r in logs %}
+    <tr>
+      <td>{{ fmt_time(r.timestamp) }}</td>
+      <td><a href="/employee/{{ r.emp_id }}">{{ r.name }}</a> <span class="muted">({{ r.emp_id }})</span></td>
+      <td><span class="badge {{ 'in' if r.event_type == 'IN' else 'out' }}">{{ r.event_type }}</span></td>
+      <td>{{ "%.3f"|format(r.confidence) }}</td>
+      <td class="badge {{ 'synced' if r.synced else 'pending' }}">{{ '✓ synced' if r.synced else '⏳ pending' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No attendance events yet.</p>
+  {% endif %}
+</div>
+
+<script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+<script>
+async function deactivate(emp_id) {
+  await fetch('/api/employees/' + emp_id + '/deactivate', { method: 'POST' });
+  location.reload();
+}
+async function manual() {
+  const emp_id = document.getElementById('m-id').value.trim();
+  const event_type = document.getElementById('m-type').value;
+  if (!emp_id) return alert('ID required');
+  const r = await fetch('/api/manual', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emp_id, event_type }),
+  });
+  if (r.ok) location.reload();
+  else alert('failed');
+}
+
+(async function drawDailyChart() {
+  const r = await fetch('/api/stats/daily?days=30');
+  if (!r.ok) return;
+  const { days } = await r.json();
+  const ctx = document.getElementById('dailyChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: days.map(d => d.date.slice(5)),  // MM-DD
+      datasets: [
+        { label: 'IN',  data: days.map(d => d.in_count),
+          backgroundColor: 'rgba(22, 163, 74, 0.8)' },
+        { label: 'OUT', data: days.map(d => d.out_count),
+          backgroundColor: 'rgba(217, 119, 6, 0.8)' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: false },
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+      plugins: { legend: { position: 'bottom' } },
+    },
+  });
+})();
+</script>
+{% endblock %}

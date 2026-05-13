@@ -1,0 +1,21 @@
+[Unit]
+Description=Attendance System (camera + recognition + web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/attendance_system
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/home/pi/attendance_system"
+Environment="ATTENDANCE_ADMIN_USER=admin"
+# CHANGE this on the Pi before deployment
+Environment="ATTENDANCE_ADMIN_PASS=changeme"
+ExecStart=/home/pi/attendance_system/.venv/bin/python /home/pi/attendance_system/src/web/app.py
+Restart=on-failure
+RestartSec=5
+SupplementaryGroups=video
+
+[Install]
+WantedBy=multi-user.target

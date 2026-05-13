@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# --- Privacy-sensitive: NEVER commit ---
+# Local SQLite database contains employee names + face embeddings (biometric data).
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/faces/
+
+# Google service-account credentials
+config/credentials.json
+
+# InsightFace model cache (gets re-downloaded on first run)
+.insightface/

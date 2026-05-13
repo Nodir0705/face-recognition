@@ -1,0 +1,25 @@
+# Runtime deps for the attendance system.
+# Mirror these in scripts/install.sh when versions change.
+#
+# Install on Pi:
+#   python3 -m venv .venv --system-site-packages   # picamera2 lives in system
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Install on a dev laptop (no Pi camera; OpenCV /dev/video0 fallback):
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+numpy<2.0
+opencv-python-headless==4.10.0.84
+insightface==0.7.3
+onnxruntime==1.18.1
+google-api-python-client==2.140.0
+google-auth==2.33.0
+google-auth-httplib2==0.2.0
+flask==3.0.3
+PyYAML==6.0.2
+
+# Dev / test only
+pytest==8.3.3

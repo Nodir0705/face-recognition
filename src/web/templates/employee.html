@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ emp.name }} · Report{% endblock %}
+{% block head %}
+<style>
+  .report-header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 24px; gap: 16px; flex-wrap: wrap;
+  }
+  .report-header .meta { color: var(--muted); font-size: 14px; }
+
+  .summary-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .stat {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+  }
+  .stat .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .stat .value { font-size: 22px; font-weight: 600; }
+
+  .range-form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .range-form .form-row { margin: 0; }
+  .range-form .form-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .range-form input { width: 150px; }
+
+  .chart-card { padding: 16px; }
+  .chart-card canvas { max-height: 240px; }
+
+  /* Print: hide nav, range form, action buttons, charts; keep summary table only */
+  @media print {
+    .nav, .range-form, .actions, .chart-card, .no-print { display: none !important; }
+    body { background: white; }
+    .container { max-width: 100%; padding: 0; }
+    .card { border: none; padding: 0; margin: 0 0 12px; }
+    h1 { font-size: 18px; }
+    table { font-size: 12px; }
+  }
+</style>
+{% endblock %}
+{% block body %}
+
+<div class="report-header">
+  <div>
+    <h1>{{ emp.name }}</h1>
+    <div class="meta">
+      {{ emp.emp_id }}
+      {%- if emp.department %} · {{ emp.department }}{% endif -%}
+      {%- if emp.email %} · {{ emp.email }}{% endif %}
+      · enrolled {{ emp_enrolled_str }}
+    </div>
+  </div>
+  <div class="actions">
+    <button onclick="window.print()">Print / Save PDF</button>
+    <a href="/api/export/csv?from={{ from_str }}&to={{ to_str }}&emp_id={{ emp.emp_id }}">
+      <button class="secondary">Download CSV</button>
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <form method="get" class="range-form">
+    <div class="form-row">
+      <label>From</label>
+      <input type="date" name="from" value="{{ from_str }}">
+    </div>
+    <div class="form-row">
+      <label>To</label>
+      <input type="date" name="to" value="{{ to_str }}">
+    </div>
+    <button>Apply</button>
+  </form>
+</div>
+
+<div class="summary-stats">
+  <div class="stat">
+    <div class="label">Range</div>
+    <div class="value" style="font-size: 16px;">{{ from_str }} → {{ to_str }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Days present</div>
+    <div class="value">{{ days_present }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Total worked</div>
+    <div class="value">{{ total_hours_str }}</div>
+  </div>
+</div>
+
+<div class="card chart-card">
+  <h2 style="margin-top: 0;">Worked hours per day</h2>
+  {% if summary %}
+  <canvas id="hoursChart"></canvas>
+  {% else %}
+  <p class="muted">No data in this range.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Daily summary</h2>
+  {% if summary %}
+  <table>
+    <tr><th>Date</th><th>First in</th><th>Last out</th><th>Hours</th><th>Events</th></tr>
+    {% for d in summary %}
+    <tr>
+      <td>{{ d.date }}</td>
+      <td>{{ fmt_hm(d.first_in) }}</td>
+      <td>{{ fmt_hm(d.last_out) }}</td>
+      <td>{{ fmt_hours(d.worked_seconds) }}</td>
+      <td class="muted">{{ d.events|length }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No attendance events in this range.</p>
+  {% endif %}
+</div>
+
+{% if summary %}
+<script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+<script>
+  const data = {{ summary|tojson }};
+  const ctx = document.getElementById('hoursChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [{
+        label: 'Worked hours',
+        data: data.map(d => +(d.worked_seconds / 3600).toFixed(2)),
+        backgroundColor: 'rgba(37, 99, 235, 0.7)',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'hours' } } },
+      plugins: { legend: { display: false } },
+    },
+  });
+</script>
+{% endif %}
+
+{% endblock %}
