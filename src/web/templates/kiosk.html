@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Attendance Kiosk</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; color: white; }
+  .stage { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .stage img { max-width: 100%; max-height: 100%; }
+
+  /* The greeting banner that appears on a successful log */
+  .banner {
+    position: absolute;
+    left: 0; right: 0; top: 8%;
+    text-align: center;
+    transform: translateY(-20px);
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none;
+  }
+  .banner.show { opacity: 1; transform: translateY(0); }
+  .banner-card {
+    display: inline-block;
+    background: rgba(22, 163, 74, 0.95);
+    padding: 18px 36px;
+    border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    backdrop-filter: blur(10px);
+  }
+  .banner-name { font-size: 36px; font-weight: 600; margin-bottom: 4px; }
+  .banner-msg { font-size: 22px; opacity: 0.95; }
+
+  /* Clock in bottom-right */
+  .clock {
+    position: absolute;
+    bottom: 24px; right: 32px;
+    font-size: 18px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 14px;
+    border-radius: 8px;
+  }
+
+  /* "Look at the camera" hint when no face is recognized */
+  .hint {
+    position: absolute;
+    bottom: 80px; left: 0; right: 0;
+    text-align: center;
+    font-size: 20px;
+    color: rgba(255,255,255,0.7);
+    opacity: 0;
+    transition: opacity 0.5s;
+  }
+  .hint.show { opacity: 1; }
+
+  /* Tap-anywhere to dismiss greeting early (helps queueing) */
+  .stage { cursor: pointer; }
+
+  /* 7" touchscreen (1024x600) sizing: bump up the banner so it dominates */
+  @media (max-width: 1100px) {
+    .banner-name { font-size: 44px; }
+    .banner-msg { font-size: 26px; }
+    .banner-card { padding: 22px 44px; }
+    .clock { font-size: 16px; bottom: 16px; right: 20px; padding: 6px 10px; }
+    .hint { font-size: 22px; bottom: 56px; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <img id="feed" src="/api/kiosk_stream" alt="Camera">
+  <div class="banner" id="banner">
+    <div class="banner-card">
+      <div class="banner-name" id="banner-name"></div>
+      <div class="banner-msg" id="banner-msg"></div>
+    </div>
+  </div>
+  <div class="hint" id="hint">카메라를 바라봐 주세요</div>
+  <div class="clock" id="clock"></div>
+</div>
+
+<script>
+const GREETING_DURATION = {{ greeting_duration }} * 1000;
+
+const banner = document.getElementById('banner');
+const bannerName = document.getElementById('banner-name');
+const bannerMsg = document.getElementById('banner-msg');
+const hint = document.getElementById('hint');
+const clockEl = document.getElementById('clock');
+
+function fmtClock() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${hh}:${mm}:${ss}`;
+}
+setInterval(() => clockEl.textContent = fmtClock(), 1000);
+clockEl.textContent = fmtClock();
+
+let lastShownAt = 0;
+let lastShownId = '';
+let hideTimer = null;
+let noFaceSince = Date.now();
+
+async function pollState() {
+  try {
+    const r = await fetch('/api/state');
+    const data = await r.json();
+    const faces = data.faces || [];
+    const recognized = faces.filter(f => f.recognized);
+
+    if (faces.length === 0) {
+      if (Date.now() - noFaceSince > 4000) hint.classList.add('show');
+    } else {
+      hint.classList.remove('show');
+      noFaceSince = Date.now();
+    }
+
+    // Find a face that JUST logged (within the last 3s)
+    const fresh = recognized.find(f =>
+      f.just_logged_at && (Date.now()/1000 - f.just_logged_at) < 3
+        && (f.emp_id !== lastShownId || Date.now() - lastShownAt > GREETING_DURATION + 1000));
+
+    if (fresh) {
+      lastShownId = fresh.emp_id;
+      lastShownAt = Date.now();
+      bannerName.textContent = fresh.name;
+      bannerMsg.textContent = fresh.event === 'IN' ? '출근 완료' : '퇴근 완료';
+      banner.classList.add('show');
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => banner.classList.remove('show'), GREETING_DURATION);
+    }
+  } catch (e) { /* keep polling */ }
+}
+setInterval(pollState, 500);
+pollState();
+
+// Tap anywhere on the screen to dismiss the current greeting early.
+// Useful when a queue is forming and the next person is ready.
+document.querySelector('.stage').addEventListener('click', () => {
+  if (banner.classList.contains('show')) {
+    banner.classList.remove('show');
+    if (hideTimer) clearTimeout(hideTimer);
+  }
+});
+</script>
+</body>
+</html>

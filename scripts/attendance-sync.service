@@ -1,0 +1,16 @@
+[Unit]
+Description=Attendance → Google Sheets Sync Worker
+After=network-online.target attendance.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/attendance_system
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/pi/attendance_system/.venv/bin/python /home/pi/attendance_system/src/sync.py
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
