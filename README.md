@@ -2,6 +2,8 @@
 
 A Raspberry Pi attendance kiosk with iPhone-Face-ID-style guided enrollment, live recognition with on-screen feedback, and Google Sheets logging.
 
+> **Two implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and to demonstrate the no-GIL win. See [`cpp/README.md`](cpp/README.md).
+
 ## How it looks
 
 - **Kiosk view** (`/kiosk`) — Employee walks up, camera draws a green box around their face. When recognition is confident, a green tick appears under the face with their name, and a banner announces "출근 완료" or "퇴근 완료".
@@ -103,9 +105,15 @@ attendance_system/
 │   ├── google_sheets_setup.md
 │   ├── remote_access.md         # for admin laptop ↔ Pi
 │   └── privacy_pipa.md
+├── cpp/                   # Parallel C++ implementation (see cpp/README.md)
+│   ├── CMakeLists.txt
+│   ├── pipeline.hpp       # SCRFD anchor decode, NMS, ArcFace alignment, match
+│   ├── bench.cpp          # head-to-head latency benchmark
+│   ├── recognize_cpp.cpp  # standalone daemon (writes to the same SQLite DB)
+│   └── README.md
 ├── requirements.txt
 ├── pytest.ini
-├── Makefile               # make install / run / sync / test
+├── Makefile               # make install / run / sync / test / cpp-build / bench-cpp / bench-py / run-cpp
 └── tasks/                 # build plans + lessons (developer notes)
 ```
 
