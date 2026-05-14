@@ -70,15 +70,27 @@ The Makefile target `make bench-hailo` does this automatically over SSH (rsyncs 
 - **Postprocessing** (SCRFD anchor decode, NMS) is NOT in the timed loop — same cut as `cpp/bench.cpp`. The daemon would need it; the bench doesn't.
 - Recognition pass on the largest face works the same as Python+CPU and C+++CPU benches: align via 5 landmarks, run the embedding model, time it.
 
-## Honest expected numbers
+## Measured numbers
 
-Hailo's published benchmarks for `scrfd_500m` on Hailo-8 land around **3–5 ms per inference** at batch=1 input 640×640 (Hailo Model Zoo metrics). For `arcface_mobilefacenet` similar — around **1–2 ms per face**. Vs the ~280 ms / ~150 ms CPU numbers in the parent README, this is roughly a **30–50× speedup** on the model itself.
+Real bench on jarvis (Pi 5 + Hailo-8 AI Kit, kernel 6.18.29, HailoRT 4.23.0, PCIe Gen3 x1, 2026-05-14), same input image, 200 iterations after 30 warmups:
 
-The catch: at this speed, the bottleneck shifts to **camera capture + preprocessing + postprocessing on the CPU**. Those don't change between backends. Practically:
+| Stage | p50 | p95 | p99 | min–max |
+|---|---|---|---|---|
+| SCRFD-500m (640×640 in) | **4.12 ms** | 4.22 | 4.28 | 4.02 – 4.31 |
+| ArcFace MobileFaceNet (112×112 in) | **1.46 ms** | 1.47 | 1.48 | 1.45 – 1.51 |
+| **Total per face** | **5.59 ms** | 5.69 | 5.74 | 5.48 – 5.77 |
 
-- Per-frame end-to-end on Pi 5 + Hailo-8: roughly 15–25 ms
-- Achievable throughput with our pipeline: **40–60 fps** (camera-limited)
-- Real-time ✓
+Head-to-head vs Python on the **same Pi 5 CPU**, same image, same iterations:
+
+| Backend | det+rec p50 | p99 | Jitter | Throughput |
+|---|---|---|---|---|
+| Python + CPU (4 threads) | 48.08 ms | 65.33 ms | **±27 ms** | ~21 fps |
+| **Hailo-8** | **5.59 ms** | **5.74 ms** | **±0.29 ms** | **~180 fps** |
+| Speedup | **8.6×** | **11.4×** | **95× tighter** | **8.6×** |
+
+The headline isn't only speed — **jitter is two orders of magnitude tighter**. CPU swings 42→70 ms on the same input, Hailo holds 5.48→5.77 ms. That's what makes Hailo "real-time" in a way the CPU isn't, even when averages are closer.
+
+At this speed the recognition pipeline becomes camera-bound, not compute-bound. Practical throughput is whatever your camera + preprocessing can sustain — for a Pi Camera Module 3 at 720p that's ~30–60 fps depending on frame rate setting, and Hailo has plenty of headroom for multiple simultaneous detections per frame.
 
 ## Troubleshooting
 

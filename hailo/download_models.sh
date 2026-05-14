@@ -11,11 +11,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/models"
 
-# Hailo Model Zoo public mirror layout (as of ZooModel 2.13 / HailoRT 4.20+):
-#   https://hailo-csdata.s3.eu-west-2.amazonaws.com/resources/hefs/<chip>/<model>.hef
-# Mirror them locally so the bench/daemon don't have to re-download.
+# Hailo Model Zoo public S3 layout (verified 2026-05-14):
+#   https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/<zoover>/<chip>/<model>.hef
+# This URL pattern is what hailo-rpi5-examples/download_resources.sh uses
+# internally — same source the AI Kit examples ship with.
+#
+# Override the version with HAILO_ZOO_VER env var if a newer release drops.
 
-BASE="https://hailo-csdata.s3.eu-west-2.amazonaws.com/resources/hefs/h8"
+ZOOVER="${HAILO_ZOO_VER:-v2.14.0}"
+BASE="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/${ZOOVER}/hailo8"
 
 declare -A MODELS=(
     [scrfd_500m.hef]="$BASE/scrfd_500m.hef"
