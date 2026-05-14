@@ -2,7 +2,7 @@
 
 A Raspberry Pi attendance kiosk with iPhone-Face-ID-style guided enrollment, live recognition with on-screen feedback, and Google Sheets logging.
 
-> **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU and is the real-time path (~30-50× speedup on model inference). See [`cpp/README.md`](cpp/README.md) and [`hailo/README.md`](hailo/README.md). `make bench-all` prints all three SUMMARY lines for direct comparison.
+> **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU and is **measured at 8.6× faster than Python on the same Pi 5 CPU, with 95× tighter jitter** (5.59 ms vs 48.08 ms per face, ±0.29 ms vs ±27 ms). See [`cpp/README.md`](cpp/README.md) and [`hailo/README.md`](hailo/README.md). `make bench-all` prints all three SUMMARY lines for direct comparison.
 
 ## How it looks
 
