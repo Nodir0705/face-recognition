@@ -27,3 +27,15 @@ config/credentials.json
 
 # InsightFace model cache (gets re-downloaded on first run)
 .insightface/
+
+# Hailo HEF binaries — re-downloaded by hailo/download_models.sh
+hailo/models/*.hef
+hailo/models/*.tmp
+
+# C++ build artifacts
+cpp/build/
+
+# Sample images for bench (large, optional)
+samples/*.jpg
+samples/*.png
+!samples/README.md

@@ -15,8 +15,14 @@ BENCH_ITERS      ?= 200
 BENCH_WARMUP     ?= 30
 BENCH_THREADS    ?= 2
 
+# Hailo (remote): the Pi 5 + Hailo-8 lives on jarvis. Override on the CLI:
+#   make bench-hailo HAILO_HOST=pi@10.0.0.5
+HAILO_HOST       ?= jarvis@192.168.3.8
+HAILO_REMOTE_DIR ?= ~/attendance_system
+
 .PHONY: help install install-dev run sync test test-slow clean \
-        cpp-build cpp-clean bench-cpp bench-py run-cpp
+        cpp-build cpp-clean bench-cpp bench-py run-cpp \
+        hailo-sync hailo-setup bench-hailo bench-all
 
 help:
 	@echo "Python targets:"
@@ -34,6 +40,12 @@ help:
 	@echo "  bench-cpp     run the C++ benchmark on BENCH_IMAGE (default: $(BENCH_IMAGE))"
 	@echo "  bench-py      run the Python benchmark on BENCH_IMAGE"
 	@echo "  run-cpp       run the C++ recognition daemon (uses data/attendance.db)"
+	@echo
+	@echo "Hailo targets (Pi 5 + Hailo-8 — runs over SSH on HAILO_HOST=$(HAILO_HOST)):"
+	@echo "  hailo-sync    rsync hailo/ + samples/ to the Pi"
+	@echo "  hailo-setup   download HEFs into hailo/models on the Pi (one-time)"
+	@echo "  bench-hailo   run the Hailo benchmark remotely, return SUMMARY line"
+	@echo "  bench-all     run bench-py + bench-cpp + bench-hailo, print all 3 SUMMARY lines"
 
 install:
 	python3 -m venv .venv --system-site-packages
@@ -95,3 +107,28 @@ run-cpp: cpp/build/recognize_cpp
 	    --camera 0
 
 cpp/build/bench_cpp cpp/build/recognize_cpp: cpp-build
+
+# ---------- Hailo (remote on Pi 5) ----------
+
+hailo-sync:
+	ssh $(HAILO_HOST) 'mkdir -p $(HAILO_REMOTE_DIR)/hailo/models $(HAILO_REMOTE_DIR)/samples'
+	rsync -az --delete --exclude '*.hef' --exclude '*.tmp' \
+	    hailo/ $(HAILO_HOST):$(HAILO_REMOTE_DIR)/hailo/
+	rsync -az --include '*.jpg' --include '*.png' --include 'README.md' --exclude '*' \
+	    samples/ $(HAILO_HOST):$(HAILO_REMOTE_DIR)/samples/
+
+hailo-setup: hailo-sync
+	ssh $(HAILO_HOST) 'cd $(HAILO_REMOTE_DIR) && bash hailo/download_models.sh'
+
+bench-hailo: hailo-sync
+	@ssh $(HAILO_HOST) 'cd $(HAILO_REMOTE_DIR) && \
+	    python3 hailo/bench_hailo.py \
+	        --model hailo/models/scrfd_500m.hef \
+	        --rec   hailo/models/arcface_mobilefacenet.hef \
+	        --image $(BENCH_IMAGE) \
+	        --iters $(BENCH_ITERS) --warmup $(BENCH_WARMUP)'
+
+bench-all:
+	@echo "===== Python (CPU) ====="; $(MAKE) bench-py     2>&1 | tail -8 || true
+	@echo "===== C++ (CPU) ====="   ; $(MAKE) bench-cpp    2>&1 | tail -8 || true
+	@echo "===== Hailo (NPU) ====="  ; $(MAKE) bench-hailo 2>&1 | tail -8 || true

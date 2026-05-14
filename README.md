@@ -2,7 +2,7 @@
 
 A Raspberry Pi attendance kiosk with iPhone-Face-ID-style guided enrollment, live recognition with on-screen feedback, and Google Sheets logging.
 
-> **Two implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and to demonstrate the no-GIL win. See [`cpp/README.md`](cpp/README.md).
+> **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU and is the real-time path (~30-50× speedup on model inference). See [`cpp/README.md`](cpp/README.md) and [`hailo/README.md`](hailo/README.md). `make bench-all` prints all three SUMMARY lines for direct comparison.
 
 ## How it looks
 
@@ -111,9 +111,14 @@ attendance_system/
 │   ├── bench.cpp          # head-to-head latency benchmark
 │   ├── recognize_cpp.cpp  # standalone daemon (writes to the same SQLite DB)
 │   └── README.md
+├── hailo/                 # Pi 5 + Hailo-8 NPU implementation (see hailo/README.md)
+│   ├── README.md
+│   ├── download_models.sh # pulls SCRFD-500m + ArcFace MobileFaceNet HEFs
+│   └── bench_hailo.py     # third bench, same SUMMARY format
+├── samples/               # bench input images (gitignored)
 ├── requirements.txt
 ├── pytest.ini
-├── Makefile               # make install / run / sync / test / cpp-build / bench-cpp / bench-py / run-cpp
+├── Makefile               # make install / run / test / cpp-build / bench-{cpp,py,hailo,all}
 └── tasks/                 # build plans + lessons (developer notes)
 ```
 
