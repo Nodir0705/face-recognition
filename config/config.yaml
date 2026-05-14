@@ -9,6 +9,20 @@ camera:
   roi: [0.1, 0.1, 0.9, 0.9]
 
 recognition:
+  # Which inference backend to use.
+  #   "python" — InsightFace + ONNXRuntime on CPU (default; works everywhere)
+  #   "hailo"  — Hailo-8 NPU via PCIe (requires Pi 5 + AI Kit, see hailo/README.md)
+  #
+  # WARNING: switching backends invalidates the gallery. Hailo's
+  # arcface_mobilefacenet HEF and InsightFace's w600k_mbf.onnx are different
+  # trained checkpoints — embeddings live in completely different vector
+  # spaces (cos_sim ≈ 0). Re-enroll all employees after switching.
+  backend: "python"
+
+  # Hailo-only: paths to the HEFs (relative to project root)
+  hailo_det_hef: "hailo/models/scrfd_500m.hef"
+  hailo_rec_hef: "hailo/models/arcface_mobilefacenet.hef"
+
   # InsightFace model bundle. buffalo_sc is the lightest; buffalo_s is more accurate.
   # Pi 4 (8GB) handles buffalo_sc at ~3-4 fps. buffalo_s drops to ~1-2 fps.
   model_pack: "buffalo_sc"
