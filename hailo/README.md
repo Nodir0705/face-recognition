@@ -21,11 +21,17 @@ Already in place (set up 2026-05-14):
 
 ```
 hailo/
-  README.md             # this file
-  download_models.sh    # pulls scrfd_500m + arcface_mobilefacenet HEFs (Hailo-8 build)
-  models/               # HEFs land here, gitignored
-  bench_hailo.py        # latency benchmark — same CLI as scripts/bench_python.py
-  recognize_hailo.py    # (planned) standalone daemon equivalent to src/recognize.py
+  README.md              # this file
+  download_models.sh     # pulls scrfd_500m + arcface_mobilefacenet HEFs (Hailo-8 build)
+  models/                # HEFs land here, gitignored
+  bench_hailo.py         # latency benchmark — same CLI as scripts/bench_python.py
+                          # also has --multi-face mode for N-face per-frame timing
+  recognize_hailo.py     # standalone daemon equivalent to src/recognize.py
+                          # writes to the same data/attendance.db the Flask app uses
+  engine_adapter.py      # HailoFaceEngine class with the same API as
+                          # src.face_engine.FaceEngine — drop-in for Flask
+  embedding_compat.py    # validates whether existing Python-enrolled employees
+                          # match against Hailo-computed embeddings (spoiler: no)
 ```
 
 ## Models
@@ -91,6 +97,39 @@ Head-to-head vs Python on the **same Pi 5 CPU**, same image, same iterations:
 The headline isn't only speed — **jitter is two orders of magnitude tighter**. CPU swings 42→70 ms on the same input, Hailo holds 5.48→5.77 ms. That's what makes Hailo "real-time" in a way the CPU isn't, even when averages are closer.
 
 At this speed the recognition pipeline becomes camera-bound, not compute-bound. Practical throughput is whatever your camera + preprocessing can sustain — for a Pi Camera Module 3 at 720p that's ~30–60 fps depending on frame rate setting, and Hailo has plenty of headroom for multiple simultaneous detections per frame.
+
+### Multi-face scaling (5 faces in one frame)
+
+`bench_hailo.py --multi-face` runs 1 detect + N embed per iteration, simulating a queue of multiple people at the kiosk:
+
+| Backend | per-frame p50 | p99 | Jitter | fps |
+|---|---|---|---|---|
+| Python+CPU (4 threads) | 124.21 ms | 135.70 ms | ±22 ms | 8.0 fps |
+| **Hailo-8** | **20.37 ms** | **20.77 ms** | **±0.55 ms** | **49.1 fps** |
+| Speedup | **6.1×** | **6.5×** | **40× tighter** | **6.1×** |
+
+Hailo throughput at 5 faces ≈ **245 face recognitions/sec** on a single chip. Multi-face is where the advantage really shows up — Python drops to 8 fps (noticeable lag at the door), Hailo holds 49 fps (smooth).
+
+## ⚠️ Embedding compatibility — re-enrollment required to switch backends
+
+`hailo/embedding_compat.py` measures cosine similarity between the Python embedding (InsightFace `w600k_mbf.onnx`) and the Hailo embedding (`arcface_mobilefacenet.hef`) for the same face image with bit-identical alignment.
+
+**Result: cos_sim ≈ -0.002.** The two HEF/ONNX are different trained checkpoints despite both being "MobileFaceNet ArcFace." Embeddings live in completely different vector spaces.
+
+**Implication:** if you flip `recognition.backend` from `python` to `hailo` in `config.yaml`, all existing enrolled employees become unmatchable. The DB gallery must be cleared and everyone re-enrolled.
+
+Two production paths:
+
+1. **Re-enroll on switch (recommended).** Schedule an hour, run everyone through `/enroll` once with the new backend active. Done. From then on, Hailo is the source of truth.
+2. **Compile InsightFace's `w600k_mbf.onnx` to a HEF yourself** with Hailo Dataflow Compiler (x86 + free SDK signup + a few hundred calibration images). Backwards-compatible embeddings, no re-enrollment. ~1 day of work.
+
+Run the validator yourself before committing:
+```bash
+python3 hailo/embedding_compat.py \
+    --det hailo/models/scrfd_500m.hef \
+    --rec hailo/models/arcface_mobilefacenet.hef \
+    --images samples/*.jpg
+```
 
 ## Troubleshooting
 

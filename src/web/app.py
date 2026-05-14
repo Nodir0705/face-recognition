@@ -65,11 +65,25 @@ with open(PROJECT_ROOT / "config" / "config.yaml") as f:
 
 DB = AttendanceDB(str(PROJECT_ROOT / CFG["paths"]["db"]))
 
-log.info("loading face engine…")
-ENGINE = FaceEngine(
-    model_pack=CFG["recognition"]["model_pack"],
-    det_size=tuple(CFG["recognition"]["det_size"]),
-)
+def _load_engine():
+    """Pick the recognition backend at startup based on config."""
+    backend = CFG["recognition"].get("backend", "python")
+    if backend == "hailo":
+        log.info("loading Hailo face engine…")
+        # Lazy import — keeps Python-only installs free of HailoRT dependency
+        sys.path.insert(0, str(PROJECT_ROOT / "hailo"))
+        from engine_adapter import HailoFaceEngine
+        det_path = str(PROJECT_ROOT / CFG["recognition"]["hailo_det_hef"])
+        rec_path = str(PROJECT_ROOT / CFG["recognition"]["hailo_rec_hef"])
+        return HailoFaceEngine(det_hef=det_path, rec_hef=rec_path)
+    log.info("loading Python face engine (InsightFace + ONNXRuntime CPU)…")
+    return FaceEngine(
+        model_pack=CFG["recognition"]["model_pack"],
+        det_size=tuple(CFG["recognition"]["det_size"]),
+    )
+
+
+ENGINE = _load_engine()
 
 log.info("starting camera…")
 CAMERA = CameraSource(

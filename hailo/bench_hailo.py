@@ -55,6 +55,11 @@ def parse_args():
     ap.add_argument("--image", required=True)
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--warmup", type=int, default=30)
+    ap.add_argument("--multi-face", action="store_true",
+                    help="Detect faces in the image first; then per iteration "
+                         "run 1 detect + N recognize (N = detected face count). "
+                         "Shows realistic per-frame cost when multiple people "
+                         "are in front of the camera.")
     return ap.parse_args()
 
 
@@ -92,6 +97,78 @@ def preprocess_for_hef(bgr: np.ndarray, h: int, w: int) -> np.ndarray:
     return rgb[None, ...]   # NHWC, batch 1
 
 
+def _multi_face_bench(args, vdevice):
+    """Per iteration: 1 detect + N embed (one per detected face).
+
+    Times the FULL per-frame cost as if the recognition loop were serving a
+    queue of N people simultaneously. Reports per-face mean and per-frame total.
+    """
+    from recognize_hailo import HailoSCRFD, HailoArcFace, align_face
+
+    img = cv2.imread(args.image)
+    if img is None:
+        sys.exit(f"could not read image: {args.image}")
+
+    det = HailoSCRFD(vdevice, args.model)
+    rec = HailoArcFace(vdevice, args.rec) if args.rec else None
+    if rec is None:
+        sys.exit("--multi-face requires --rec (need to time recognition per face)")
+
+    print(f"detecting faces in {args.image}…")
+    with det.infer_pipeline() as dp:
+        blob, scale = det.preprocess(img)
+        dets = det.decode(dp.infer({det.input_name: blob}))
+    if not dets:
+        sys.exit("no faces detected in input image — multi-face bench needs at least 1")
+    print(f"  found {len(dets)} face(s); will run 1 detect + {len(dets)} embed per iter")
+
+    # Pre-align all faces once (alignment cost is tiny but excluded from the
+    # bench — same convention as the bench loop's preprocessing baseline).
+    aligned_faces = []
+    for d in dets:
+        kps = d["kps"] / scale
+        aligned = align_face(img, kps)
+        if aligned is not None:
+            aligned_faces.append(aligned)
+    if not aligned_faces:
+        sys.exit("no faces could be aligned — kps decode produced unusable points")
+
+    # Open both pipelines, warmup, time
+    with det.infer_pipeline() as dp, rec.infer_pipeline() as rp:
+        for _ in range(args.warmup):
+            dp.infer({det.input_name: blob})
+            for a in aligned_faces:
+                rec.embed(rp, a)
+
+        det_ms, rec_per_frame_ms, total_ms = [], [], []
+        for _ in range(args.iters):
+            t0 = time.perf_counter()
+            dp.infer({det.input_name: blob})
+            t1 = time.perf_counter()
+            for a in aligned_faces:
+                rec.embed(rp, a)
+            t2 = time.perf_counter()
+
+            det_ms.append((t1 - t0) * 1000.0)
+            rec_per_frame_ms.append((t2 - t1) * 1000.0)
+            total_ms.append((t2 - t0) * 1000.0)
+
+    n_faces = len(aligned_faces)
+    rec_per_face = [r / n_faces for r in rec_per_frame_ms]
+
+    print(f"\nresults (n={args.iters}, faces={n_faces})")
+    report("detect",       det_ms)
+    report("rec/face",     rec_per_face)
+    report("rec/frame",    rec_per_frame_ms)
+    report("total/frame",  total_ms)
+
+    print(f"\nSUMMARY  impl=hailo-multi  n_faces={n_faces}  "
+          f"det_p50={percentile(det_ms, 0.50):.2f}  "
+          f"rec_per_face_p50={percentile(rec_per_face, 0.50):.2f}  "
+          f"frame_total_p50={percentile(total_ms, 0.50):.2f}  "
+          f"effective_fps={1000.0 / percentile(total_ms, 0.50):.1f}")
+
+
 def main():
     args = parse_args()
 
@@ -99,7 +176,16 @@ def main():
     # `--help` works on a dev box without HailoRT installed.
     from hailo_platform import (HEF, VDevice, ConfigureParams, FormatType,
                                  HailoStreamInterface, InferVStreams,
-                                 InputVStreamParams, OutputVStreamParams)
+                                 InputVStreamParams, OutputVStreamParams,
+                                 HailoSchedulingAlgorithm)
+
+    if args.multi_face:
+        # Multi-face mode needs the scheduler so SCRFD + ArcFace can both run
+        vparams = VDevice.create_params()
+        vparams.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+        with VDevice(vparams) as vd:
+            _multi_face_bench(args, vd)
+        return
 
     print(f"loading detector HEF: {args.model}")
     det_hef = HEF(args.model)
