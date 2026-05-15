@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS sync_failures (
     last_error      TEXT,
     last_attempt    INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
 """
 
 
@@ -263,6 +269,29 @@ class AttendanceDB:
                 "events": events,
             })
         return out
+
+    # ---------- Settings (key/value runtime config) ----------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value = excluded.value, updated_at = excluded.updated_at""",
+                (key, value, int(time.time())),
+            )
+
+    def all_settings(self) -> dict[str, str]:
+        with self._conn() as c:
+            return {r["key"]: r["value"]
+                    for r in c.execute("SELECT key, value FROM settings").fetchall()}
 
     def events_per_day(self, start_ts: int, end_ts: int):
         """Counts of IN and OUT events per local date in the range.
