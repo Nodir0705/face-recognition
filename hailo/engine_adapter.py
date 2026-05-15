@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from src.face_engine import DetectedFace
+from src.pose import geometric_pose
 # Reuse the SCRFD + ArcFace wrappers from the daemon
 sys.path.insert(0, str(PROJECT_ROOT / "hailo"))
 from recognize_hailo import HailoSCRFD, HailoArcFace, align_face
@@ -82,12 +83,16 @@ class HailoFaceEngine:
             if aligned is None:
                 continue
             emb = self._rec.embed(self._rec_pipe, aligned)
+            # Geometric pose from landmark ratios — much more reliable than
+            # solvePnP-on-5-points for the "is the user turned far enough?"
+            # decision the enrollment flow makes.
+            yaw, pitch, roll = geometric_pose(kps5)
             out.append(DetectedFace(
                 bbox=(int(x1), int(y1), int(x2), int(y2)),
                 embedding=emb.astype(np.float32),
                 det_score=float(d["score"]),
                 landmarks=kps5.astype(np.float32),
-                pose=(0.0, 0.0, 0.0),  # Hailo HEFs don't provide pose
+                pose=(yaw, pitch, roll),
             ))
         return out
 
@@ -102,3 +107,13 @@ class HailoFaceEngine:
         idx = int(np.argmax(sims))
         best = float(sims[idx])
         return (idx, best) if best >= threshold else (-1, best)
+
+    def embed_aligned(self, aligned_bgr: np.ndarray) -> np.ndarray:
+        """Run a pre-aligned 112×112 BGR face crop through ArcFace.
+        Used at enrollment time for horizontal-flip augmentation."""
+        return self._rec.embed(self._rec_pipe, aligned_bgr).astype(np.float32)
+
+    def aligned_crop(self, frame_bgr: np.ndarray, kps5: np.ndarray) -> np.ndarray | None:
+        """Helper for callers that have a frame + 5 landmarks and want the
+        same 112×112 aligned crop the recognizer would consume."""
+        return align_face(frame_bgr, kps5)
