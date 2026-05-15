@@ -33,19 +33,25 @@ class FaceEngine:
 
     def detect(self, frame_bgr: np.ndarray) -> list[DetectedFace]:
         """Detect faces and compute embeddings in a single pass."""
+        # Lazy import — keep src.pose out of module load to avoid cv2 cycles
+        from src.pose import geometric_pose
         faces = self.app.get(frame_bgr)
         out = []
         for f in faces:
             emb = f.normed_embedding.astype(np.float32)  # already L2-normalized
             x1, y1, x2, y2 = [int(v) for v in f.bbox]
-            pose = tuple(float(v) for v in (f.pose if f.pose is not None
-                                            else (0.0, 0.0, 0.0)))
+            kps5 = f.kps.astype(np.float32)
+            # Use geometric_pose (same as the Hailo adapter) so pose is
+            # computed identically on both backends. InsightFace's built-in
+            # pose attribute requires loading a separate pose module that we
+            # intentionally don't pull in (cheap landmark-ratio math is enough).
+            yaw, pitch, roll = geometric_pose(kps5)
             out.append(DetectedFace(
                 bbox=(x1, y1, x2, y2),
                 embedding=emb,
                 det_score=float(f.det_score),
-                landmarks=f.kps.astype(np.float32),
-                pose=pose,
+                landmarks=kps5,
+                pose=(yaw, pitch, roll),
             ))
         return out
 
@@ -63,3 +69,24 @@ class FaceEngine:
         idx = int(np.argmax(sims))
         best = float(sims[idx])
         return (idx, best) if best >= threshold else (-1, best)
+
+    def embed_aligned(self, aligned_bgr: np.ndarray) -> np.ndarray:
+        """Run a pre-aligned 112×112 BGR face crop through ArcFace and return
+        the L2-normalized 512-d embedding. Used by enrollment augmentation."""
+        # InsightFace's recognition module exposes get_feat for raw inference.
+        rec = self.app.models.get("recognition")
+        if rec is None:
+            raise RuntimeError("recognition module not loaded on this FaceEngine")
+        feat = rec.get_feat(aligned_bgr).flatten().astype(np.float32)
+        n = float(np.linalg.norm(feat))
+        return (feat / n) if n > 1e-9 else feat
+
+    @staticmethod
+    def aligned_crop(frame_bgr: np.ndarray, kps5: np.ndarray) -> np.ndarray | None:
+        """Return the 112×112 aligned face crop using the standard ArcFace
+        5-point similarity transform. Same template as cpp/pipeline.hpp."""
+        from insightface.utils.face_align import norm_crop
+        try:
+            return norm_crop(frame_bgr, kps5, image_size=112)
+        except Exception:
+            return None

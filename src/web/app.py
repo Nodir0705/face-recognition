@@ -47,8 +47,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.db import AttendanceDB
 from src.face_engine import FaceEngine
 from src.camera import CameraSource
-from src.pose import Pose, evaluate_face, laplacian_sharpness
+from src.pose import Pose, evaluate_face, laplacian_sharpness  # noqa: F401
 from src import occlusion
+from src.sheets import SheetsSync, parse_sheet_input
 
 
 # ---------- Setup ----------
@@ -58,6 +59,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 log = logging.getLogger("web")
+
+# Dedicated enrollment trace log — every state transition + throttled per-poll
+# pose snapshot. Written to /tmp/enrollment.log so we can `tail -f` and grep
+# during debugging without drowning in the main app log.
+ENROLL_LOG = logging.getLogger("enroll.trace")
+ENROLL_LOG.propagate = False
+ENROLL_LOG.setLevel(logging.DEBUG)
+_enroll_fh = logging.FileHandler("/tmp/enrollment.log", mode="a")
+_enroll_fh.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d %(levelname)-5s %(message)s",
+                                            datefmt="%Y-%m-%d %H:%M:%S"))
+ENROLL_LOG.addHandler(_enroll_fh)
+ENROLL_LOG.info("=" * 60)
+ENROLL_LOG.info("attendance app started — enrollment trace log opened")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 with open(PROJECT_ROOT / "config" / "config.yaml") as f:
@@ -84,6 +98,25 @@ def _load_engine():
 
 
 ENGINE = _load_engine()
+
+log.info("starting Google Sheets sync…")
+SHEETS = SheetsSync(
+    db=DB,
+    credentials_path=PROJECT_ROOT / CFG["google_sheets"]["credentials_path"],
+    sync_interval_sec=int(CFG["google_sheets"].get("sync_interval_sec", 30)),
+    batch_limit=int(CFG["google_sheets"].get("max_retries", 50)) and 50,
+)
+# One-time migration: if config.yaml has a placeholder spreadsheet_id and
+# settings table is empty, leave it empty so the UI prompts for it. If it has
+# a real ID and no setting yet, copy it across so the existing config keeps
+# working without admin re-entering.
+_legacy_sid = (CFG.get("google_sheets", {}).get("spreadsheet_id") or "").strip()
+if _legacy_sid and _legacy_sid != "PASTE_YOUR_SPREADSHEET_ID_HERE" \
+        and not DB.get_setting("sheets.spreadsheet_id"):
+    SHEETS.configure(_legacy_sid,
+                      worksheet=CFG["google_sheets"].get("worksheet", "Attendance"))
+    log.info("migrated spreadsheet_id from config.yaml into settings table")
+SHEETS.start_background()
 
 log.info("starting camera…")
 CAMERA = CameraSource(
@@ -115,8 +148,47 @@ STATE = RecognitionState()
 
 
 class EnrollmentSession:
-    """One enrollment in progress. Only one at a time."""
-    REQUIRED_POSES = [Pose.CENTER, Pose.LEFT, Pose.RIGHT, Pose.UP, Pose.DOWN]
+    """4-step sweep enrollment with live progress feedback.
+
+    Three phases:
+      PHASE_FIT   — wait for face to fit the oval. Captures a centered
+                    embedding for free at the moment the user is well-positioned.
+      PHASE_SWEEP — guided sequence: turn LEFT, turn RIGHT, tilt UP, tilt DOWN.
+                    Each step shows a live progress bar (yaw/pitch value as %
+                    of threshold) so the user can SEE they're getting closer.
+                    Threshold low + forgiving (8 in geometric_pose units) so
+                    a small head turn triggers. 5-frame smoothing kills jitter.
+                    Per-step timeout (STEP_TIMEOUT_SEC) auto-captures whatever
+                    embedding we have and advances — never gets stuck.
+      PHASE_DONE  — frontend triggers /api/enroll/finish, which adds
+                    horizontal-flip augmented embeddings (5 captured + 5 mirrored
+                    = 10 total) for additional pose variation.
+
+    Convention (geometric_pose, no mirror):
+      yaw  positive = user's nose pointing camera-right = HEAD TURNED LEFT
+      pitch positive = nose pointing up = HEAD TILTED UP
+      So "Turn LEFT" means yaw must rise above +threshold.
+    """
+    # (label, axis, sign, threshold)
+    # Thresholds in geometric_pose's "approximate degrees" scale.
+    # Tuned LOW (5/4) so a natural ~15° head turn at kiosk distance triggers.
+    # Anyone struggling to hit these values tells us it's a scale/sign bug
+    # rather than the user not turning enough.
+    SWEEP_SEQUENCE = [
+        ("left",  "yaw",   +1, 18.0),
+        ("right", "yaw",   -1, 18.0),
+        ("up",    "pitch", +1, 13.0),
+        ("down",  "pitch", -1, 13.0),
+    ]
+    SMOOTH_WINDOW    = 3    # smaller window = faster response to actual turns
+    HOLD_FRAMES      = 1
+    STEP_TIMEOUT_SEC = 8.0
+    SHARPNESS_MIN    = 40.0
+    DET_SCORE_MIN    = 0.60
+
+    PHASE_FIT   = "fit"
+    PHASE_SWEEP = "sweep"
+    PHASE_DONE  = "done"
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -125,12 +197,39 @@ class EnrollmentSession:
         self.name = ""
         self.department = ""
         self.email = ""
-        self.samples: dict[Pose, np.ndarray] = {}   # pose -> embedding
-        self.crops: dict[Pose, np.ndarray] = {}     # pose -> face crop (for preview)
         self.session_id = ""
         self.started_at = 0.0
-        self.current_target: Pose = Pose.CENTER
+
+        self.phase = self.PHASE_FIT
+        self.step_idx = 0
+        self.center_embedding: np.ndarray | None = None
+        self.center_crop: np.ndarray | None = None
+        self.sweep_embeddings: list[np.ndarray] = []
+        self.sweep_crops: list[np.ndarray] = []
+
+        # Pose smoothing
+        self._yaw_hist: deque = deque(maxlen=self.SMOOTH_WINDOW)
+        self._pitch_hist: deque = deque(maxlen=self.SMOOTH_WINDOW)
+        self._step_started_at = 0.0
+        # "Armed" gate: each new step refuses to capture until the user
+        # returns near-neutral. Without this, residual pose from the previous
+        # step (e.g. still-extreme-left after a strong left turn) gets stolen
+        # by the next step ("right") because the inverted sign makes it look
+        # like a satisfying value.
+        self._step_armed = False
+        # Best frame this step in case we need to fall back at timeout
+        self._best_value = 0.0
+        self._best_embedding: np.ndarray | None = None
+        self._best_crop: np.ndarray | None = None
+
         self.last_status: dict = {}
+        # Last detection result, cached for the MJPEG overlay to draw debug
+        # geometry over the live frame. Only the overlay reads it; status
+        # endpoint writes it. Threading: a stale read is fine — at worst we
+        # draw landmarks one frame behind.
+        self.last_detection: dict | None = None
+
+    # ----- lifecycle -----
 
     def start(self, emp_id, name, dept, email):
         with self.lock:
@@ -139,47 +238,220 @@ class EnrollmentSession:
             self.name = name.strip()
             self.department = dept.strip()
             self.email = email.strip()
-            self.samples = {}
-            self.crops = {}
             self.session_id = uuid.uuid4().hex
             self.started_at = time.time()
-            self.current_target = Pose.CENTER
-
-    def add_sample(self, pose: Pose, embedding: np.ndarray, crop: np.ndarray):
-        with self.lock:
-            self.samples[pose] = embedding
-            self.crops[pose] = crop
-            # advance to next missing pose
-            for p in self.REQUIRED_POSES:
-                if p not in self.samples:
-                    self.current_target = p
-                    break
-
-    def is_complete(self) -> bool:
-        with self.lock:
-            return all(p in self.samples for p in self.REQUIRED_POSES)
-
-    def progress(self) -> dict:
-        with self.lock:
-            return {
-                "session_id": self.session_id,
-                "active": self.active,
-                "emp_id": self.emp_id,
-                "name": self.name,
-                "captured": [p.value for p in self.samples.keys()],
-                "remaining": [p.value for p in self.REQUIRED_POSES
-                              if p not in self.samples],
-                "current_target": self.current_target.value,
-                "complete": all(p in self.samples for p in self.REQUIRED_POSES),
-                "last_status": self.last_status,
-            }
+            self.phase = self.PHASE_FIT
+            self.step_idx = 0
+            self.center_embedding = None
+            self.center_crop = None
+            self.sweep_embeddings = []
+            self.sweep_crops = []
+            self._yaw_hist.clear()
+            self._pitch_hist.clear()
+            self._step_started_at = 0.0
+            self._step_armed = False
+            self._best_value = 0.0
+            self._best_embedding = None
+            self._best_crop = None
 
     def reset(self):
         with self.lock:
             self.active = False
-            self.samples = {}
-            self.crops = {}
             self.session_id = ""
+            self.phase = self.PHASE_FIT
+            self.step_idx = 0
+            self.center_embedding = None
+            self.center_crop = None
+            self.sweep_embeddings = []
+            self.sweep_crops = []
+            self._yaw_hist.clear()
+            self._pitch_hist.clear()
+            self._step_started_at = 0.0
+            self._step_armed = False
+            self._best_value = 0.0
+            self._best_embedding = None
+            self._best_crop = None
+
+    def is_complete(self) -> bool:
+        with self.lock:
+            return self.phase == self.PHASE_DONE
+
+    # ----- phase transitions -----
+
+    def fit_ok(self, embedding: np.ndarray | None = None,
+                aligned_crop: np.ndarray | None = None):
+        """Promote FIT → SWEEP. Saves the centered embedding + crop as a
+        free first sample (no head turn required). The first step starts
+        ARMED since FIT just verified a near-neutral pose."""
+        with self.lock:
+            if self.phase == self.PHASE_FIT:
+                self.phase = self.PHASE_SWEEP
+                if embedding is not None:
+                    self.center_embedding = embedding.astype(np.float32)
+                if aligned_crop is not None:
+                    self.center_crop = aligned_crop.copy()
+                self._step_started_at = time.time()
+                self._yaw_hist.clear()
+                self._pitch_hist.clear()
+                self._step_armed = True
+                self._best_value = 0.0
+                self._best_embedding = None
+                self._best_crop = None
+
+    def update_sweep(self, yaw: float, pitch: float, embedding: np.ndarray,
+                     aligned_crop: np.ndarray | None = None) -> dict:
+        """Push one frame's pose into the smoother + check the current
+        sweep step. Returns a status dict with: smoothed pose, current step
+        info, live progress 0..100 %, hold counter, and whether this call
+        captured + advanced.
+
+        Per-step timeout: if STEP_TIMEOUT_SEC elapses, we capture the BEST
+        pose value we saw during the step (fallback to the current frame if
+        we never saw anything good) and advance. Never blocks.
+        """
+        out = {
+            "smoothed_yaw": 0.0, "smoothed_pitch": 0.0,
+            "progress": 0.0, "captured": False, "advanced": False,
+            "current_step": None, "step_value": 0.0, "step_target": 0.0,
+            "timeout_sec_left": 0.0,
+        }
+        with self.lock:
+            if self.phase != self.PHASE_SWEEP \
+                    or self.step_idx >= len(self.SWEEP_SEQUENCE):
+                return out
+
+            self._yaw_hist.append(float(yaw))
+            self._pitch_hist.append(float(pitch))
+            sm_yaw = sum(self._yaw_hist) / len(self._yaw_hist)
+            sm_pitch = sum(self._pitch_hist) / len(self._pitch_hist)
+
+            label, axis, sign, threshold = self.SWEEP_SEQUENCE[self.step_idx]
+            value = sm_yaw if axis == "yaw" else sm_pitch
+            signed = value * sign  # always positive when we're in the right direction
+            progress = max(0.0, min(1.0, signed / threshold)) * 100.0
+
+            # ARM gate — once the smoothed value is near neutral (signed below
+            # 30% of threshold), the step becomes "armed" and a subsequent
+            # threshold crossing will fire a capture. Without this, residual
+            # pose from the previous step (e.g. still extreme-left after the
+            # LEFT step) could trigger the next step's threshold instantly
+            # via inverted sign.
+            arm_thresh = threshold * 0.3
+            if not self._step_armed:
+                if abs(value) < arm_thresh:
+                    self._step_armed = True
+
+            # Track the BEST frame this step sees (for timeout fallback) —
+            # only count frames after we're armed, so residuals don't pollute.
+            if self._step_armed and signed > self._best_value:
+                self._best_value = signed
+                self._best_embedding = embedding.astype(np.float32)
+                if aligned_crop is not None:
+                    self._best_crop = aligned_crop.copy()
+
+            captured = False
+            advanced = False
+            timed_out = (time.time() - self._step_started_at) > self.STEP_TIMEOUT_SEC
+
+            if self._step_armed and signed >= threshold:
+                # Threshold met (and we're armed) — capture this exact frame
+                self.sweep_embeddings.append(embedding.astype(np.float32))
+                if aligned_crop is not None:
+                    self.sweep_crops.append(aligned_crop.copy())
+                captured = True
+                advanced = True
+            elif timed_out and self._best_embedding is not None \
+                    and self._best_value >= threshold * 0.5:
+                # Timed out with a decent best frame — keep it (≥50% of target).
+                # If the best is weaker than that, the embedding would be
+                # near-frontal and useless; better to fail than ship junk.
+                self.sweep_embeddings.append(self._best_embedding)
+                if self._best_crop is not None:
+                    self.sweep_crops.append(self._best_crop)
+                captured = True
+                advanced = True
+
+            if advanced:
+                self.step_idx += 1
+                self._yaw_hist.clear()
+                self._pitch_hist.clear()
+                self._step_started_at = time.time()
+                self._step_armed = False
+                self._best_value = 0.0
+                self._best_embedding = None
+                self._best_crop = None
+                if self.step_idx >= len(self.SWEEP_SEQUENCE):
+                    self.phase = self.PHASE_DONE
+
+            # Determine "what we did" for accurate logging — the trigger
+            # branch we actually entered, not a reverse-engineered guess.
+            capture_reason = ""
+            if captured:
+                capture_reason = ("threshold" if (signed >= threshold)
+                                  else "timeout-fallback")
+            out.update({
+                "smoothed_yaw":     sm_yaw,
+                "smoothed_pitch":   sm_pitch,
+                "progress":         progress,
+                "captured":         captured,
+                "advanced":         advanced,
+                "armed":            self._step_armed,
+                "current_step":     label,
+                "step_value":       round(signed, 1),
+                "step_target":      threshold,
+                "best_so_far":      round(self._best_value, 1),
+                "capture_reason":   capture_reason,
+                "timeout_sec_left": max(0.0, self.STEP_TIMEOUT_SEC -
+                                              (time.time() - self._step_started_at)),
+            })
+            return out
+
+    def all_embeddings(self) -> np.ndarray:
+        with self.lock:
+            embs = []
+            if self.center_embedding is not None:
+                embs.append(self.center_embedding)
+            embs.extend(self.sweep_embeddings)
+            if not embs:
+                return np.zeros((0, 512), dtype=np.float32)
+            return np.stack(embs).astype(np.float32)
+
+    def all_crops(self) -> list[np.ndarray]:
+        with self.lock:
+            crops = []
+            if self.center_crop is not None:
+                crops.append(self.center_crop)
+            crops.extend(self.sweep_crops)
+            return crops
+
+    def progress(self) -> dict:
+        with self.lock:
+            steps = []
+            for i, (label, _, _, _) in enumerate(self.SWEEP_SEQUENCE):
+                if i < self.step_idx:
+                    state = "done"
+                elif i == self.step_idx and self.phase == self.PHASE_SWEEP:
+                    state = "active"
+                else:
+                    state = "pending"
+                steps.append({"label": label, "state": state})
+            current = (self.SWEEP_SEQUENCE[self.step_idx][0]
+                       if self.phase == self.PHASE_SWEEP
+                          and self.step_idx < len(self.SWEEP_SEQUENCE)
+                       else None)
+            return {
+                "session_id":   self.session_id,
+                "active":       self.active,
+                "emp_id":       self.emp_id,
+                "name":         self.name,
+                "phase":        self.phase,
+                "step_idx":     self.step_idx,
+                "total_steps":  len(self.SWEEP_SEQUENCE),
+                "current_step": current,
+                "steps":        steps,
+                "complete":     self.phase == self.PHASE_DONE,
+                "last_status":  self.last_status,
+            }
 
 
 SESSION = EnrollmentSession()
@@ -284,7 +556,13 @@ def recognition_loop():
             out.append(entry)
 
         STATE.update(out)
-        time.sleep(0.05)
+        # Cap recognition at ~12 fps (~83 ms cycle). Hailo can go much faster,
+        # but on Pi 5 the GIL is the bottleneck — a short recognition cycle
+        # starves the MJPEG generator and the kiosk video gets choppy.
+        # 12 fps recognition still feels instant to the user (banner appears
+        # within ~250 ms of stable detection thanks to the 200 ms /api/state
+        # poll on the kiosk page).
+        time.sleep(0.08)
 
 
 threading.Thread(target=recognition_loop, daemon=True).start()
@@ -415,48 +693,110 @@ def _draw_kiosk_overlay(frame: np.ndarray) -> np.ndarray:
 
 
 def _draw_enrollment_overlay(frame: np.ndarray) -> np.ndarray:
-    """Dim outside an oval guide, mark the oval, show pose target."""
+    """Mirrors the frame (selfie-style) so the user's perception of left/right
+    matches their physical motion, then dims outside a portrait oval and
+    draws live debug geometry on top of the face.
+
+    Important: the mirror is DISPLAY-ONLY. The compute path
+    (engine.detect → geometric_pose → SWEEP_SEQUENCE) still runs on the
+    unmirrored frame, so yaw/pitch values stay mathematically consistent.
+    To draw landmarks correctly on the mirrored display, we mirror their
+    x coordinates too: x_mirrored = w - x.
+    """
+    # Mirror the frame first — selfie-style display
+    frame = cv2.flip(frame, 1)
+
     h, w = frame.shape[:2]
-
-    # Build a mask: 0 inside oval, 1 outside
-    mask = np.ones((h, w), dtype=np.uint8) * 255
     cx, cy = w // 2, h // 2
-    rx, ry = int(w * 0.22), int(h * 0.36)
+    rx = int(min(w, h) * 0.22)
+    ry = int(min(w, h) * 0.30)
+
+    # Dim outside the oval guide
+    mask = np.ones((h, w), dtype=np.uint8) * 255
     cv2.ellipse(mask, (cx, cy), (rx, ry), 0, 0, 360, 0, -1)
-
-    # Darken outside
     dark = (frame * 0.45).astype(np.uint8)
-    out = np.where(mask[:, :, None] > 0, dark, frame)
+    out = np.where(mask[:, :, None] > 0, dark, frame).astype(np.uint8)
+    cv2.ellipse(out, (cx, cy), (rx, ry), 0, 0, 360, (240, 240, 240), 2)
 
-    # Oval ring
-    quality = SESSION.last_status.get("quality", {})
-    pose_ok = quality.get("pose_matches", False)
-    ring_color = (99, 199, 89) if pose_ok else (200, 200, 200)
-    cv2.ellipse(out, (cx, cy), (rx, ry), 0, 0, 360, ring_color, 3)
+    det = SESSION.last_detection
+    if not det or det.get("landmarks") is None:
+        return out
 
-    # Pose-target arrow
-    target = SESSION.current_target
-    arrow_msg = {
-        Pose.CENTER: "Look straight ahead",
-        Pose.LEFT: "Turn left",
-        Pose.RIGHT: "Turn right",
-        Pose.UP: "Tilt up",
-        Pose.DOWN: "Tilt down",
-    }.get(target, "")
+    kps_raw = det["landmarks"]
+    if kps_raw.shape != (5, 2):
+        return out
 
-    if arrow_msg:
-        (tw, th), _ = cv2.getTextSize(
-            arrow_msg, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-        cv2.putText(out, arrow_msg, ((w - tw) // 2, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    # Mirror landmark x coords so they line up with the mirrored video
+    kps = kps_raw.copy()
+    kps[:, 0] = w - kps[:, 0]
 
-    # Quality reason
-    reason = quality.get("reason", "")
-    if reason and reason != "ok":
-        (tw, th), _ = cv2.getTextSize(
-            reason, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        cv2.putText(out, reason, ((w - tw) // 2, h - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 180, 250), 2)
+    # IMPORTANT: after the mirror, what InsightFace called "L_eye" (the
+    # USER's left eye, originally on camera-right side / image-right) now
+    # appears on screen-LEFT. We swap the labels so eye-pair drawing/text
+    # makes intuitive sense in the mirrored display.
+    R_eye, L_eye, nose, R_mouth, L_mouth = (tuple(map(int, p)) for p in kps)
+    eye_mid = ((L_eye[0] + R_eye[0]) // 2, (L_eye[1] + R_eye[1]) // 2)
+    mouth_mid = ((L_mouth[0] + R_mouth[0]) // 2, (L_mouth[1] + R_mouth[1]) // 2)
+
+    # ----- skeleton -----
+
+    # Eye line — cyan
+    cv2.line(out, L_eye, R_eye, (255, 255, 0), 2, cv2.LINE_AA)
+    # Mouth line — magenta
+    cv2.line(out, L_mouth, R_mouth, (255, 0, 255), 2, cv2.LINE_AA)
+    # Vertical reference: eye midpoint → mouth midpoint (gray, dashed-ish)
+    cv2.line(out, eye_mid, mouth_mid, (180, 180, 180), 1, cv2.LINE_AA)
+
+    # ----- yaw indicator: horizontal line from eye midpoint at eye_y to nose_x -----
+    # Length and direction of this YELLOW line = yaw. Long left or long right
+    # means high yaw magnitude. If you turn your head and this line doesn't
+    # extend, the landmarks aren't following — i.e., a model issue.
+    nose_proj_eye_y = (nose[0], eye_mid[1])
+    cv2.line(out, eye_mid, nose_proj_eye_y, (0, 220, 255), 4, cv2.LINE_AA)
+
+    # ----- pitch indicator: vertical line from eye line at eye_mid_x to nose_y -----
+    # MAGENTA line. Length = pitch magnitude.
+    nose_proj_eye_x = (eye_mid[0], nose[1])
+    cv2.line(out, eye_mid, nose_proj_eye_x, (255, 100, 255), 4, cv2.LINE_AA)
+
+    # ----- 5 landmark dots, color-coded -----
+    for pt, color in zip(
+        [L_eye, R_eye, nose, L_mouth, R_mouth],
+        [(80, 255, 80), (80, 255, 80), (0, 165, 255),
+         (200, 200, 200), (200, 200, 200)],
+    ):
+        cv2.circle(out, pt, 4, color, -1, cv2.LINE_AA)
+    # Eye midpoint — orange, slightly bigger
+    cv2.circle(out, eye_mid, 5, (0, 140, 255), -1, cv2.LINE_AA)
+
+    # ----- text readouts (top-left corner) -----
+    yaw   = det.get("smoothed_yaw",   det.get("yaw",   0.0))
+    pitch = det.get("smoothed_pitch", det.get("pitch", 0.0))
+
+    # Background pill so text is readable on any video
+    pad = 8
+    lines = [
+        f"yaw  {yaw:+6.1f}",
+        f"pitch {pitch:+6.1f}",
+    ]
+    step = det.get("step")
+    if step:
+        target = det.get("step_target", 0.0)
+        value = det.get("step_value", 0.0)
+        progress = det.get("progress", 0.0)
+        best = det.get("best_so_far", 0.0)
+        armed = det.get("armed", False)
+        arm_tag = "ARMED" if armed else "not armed (return to center)"
+        lines.append(f"-> {step:5}: {value:+5.1f} / {target:.1f}  ({progress:5.1f}%)")
+        lines.append(f"   best so far: {best:+5.1f}   [{arm_tag}]")
+
+    line_h = 24
+    box_h = pad * 2 + line_h * len(lines)
+    box_w = 380
+    cv2.rectangle(out, (10, 10), (10 + box_w, 10 + box_h), (40, 40, 40), -1)
+    for i, line in enumerate(lines):
+        cv2.putText(out, line, (10 + pad, 10 + pad + line_h * (i + 1) - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
     return out
 
@@ -464,7 +804,8 @@ def _draw_enrollment_overlay(frame: np.ndarray) -> np.ndarray:
 @app.route("/api/kiosk_stream")
 def api_kiosk_stream():
     return Response(
-        CAMERA.mjpeg_generator(draw_overlay=_draw_kiosk_overlay, fps=12),
+        CAMERA.mjpeg_generator(draw_overlay=_draw_kiosk_overlay, fps=30,
+                                preview_size=(960, 540)),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -473,7 +814,8 @@ def api_kiosk_stream():
 @basic_auth
 def api_enroll_stream():
     return Response(
-        CAMERA.mjpeg_generator(draw_overlay=_draw_enrollment_overlay, fps=12),
+        CAMERA.mjpeg_generator(draw_overlay=_draw_enrollment_overlay, fps=30,
+                                preview_size=(960, 540)),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -492,13 +834,18 @@ def api_enroll_start():
                   data.get("department", ""),
                   data.get("email", ""))
     log.info(f"enrollment session started: {emp_id} / {name}")
+    ENROLL_LOG.info(f"START sid={SESSION.session_id[:8]} emp_id={emp_id} name={name!r}")
     return jsonify(SESSION.progress())
 
 
 @app.route("/api/enroll/status")
 @basic_auth
 def api_enroll_status():
-    """Polled every ~250ms by the client. Returns current pose quality."""
+    """Polled by the client every ~150ms.
+
+    Drives the whole state machine and auto-captures embeddings on dot
+    transitions — there is no separate /capture call from the client now.
+    """
     if not SESSION.active:
         return jsonify(active=False)
 
@@ -507,82 +854,217 @@ def api_enroll_status():
         return jsonify(active=True, error="no frame")
 
     faces = ENGINE.detect(frame)
+    prog = SESSION.progress()
+
     if not faces:
-        SESSION.last_status = {"quality": {
-            "pose_matches": False, "reason": "No face detected"
-        }}
-        prog = SESSION.progress()
-        prog["live"] = {"face_count": 0, "reason": "No face detected"}
+        prog["live"] = {
+            "face_count": 0,
+            "instruction": "Stand in front of the camera",
+            "yaw": 0, "pitch": 0,
+        }
         return jsonify(prog)
 
-    # Pick the largest face
+    # Largest face
     face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    q = evaluate_face(face, frame.shape, min_face_px=200, min_det_score=0.85)
     occ = occlusion.detect(frame, face.landmarks, face.bbox)
 
-    # Occlusion takes precedence over pose-quality reason — the user can't
-    # adjust pose meaningfully with a mask on.
-    reason = occ.reason or q.reason
-    pose_matches = (
-        not occ.any
-        and q.pose == SESSION.current_target
-        and q.in_frame and q.big_enough
-        and q.centered and q.sharp_enough
-    )
+    # Geometry — does the face fit the on-screen oval?
+    h, w = frame.shape[:2]
+    cx, cy = w / 2, h / 2
+    fx = (face.bbox[0] + face.bbox[2]) / 2
+    fy = (face.bbox[1] + face.bbox[3]) / 2
+    fw = face.bbox[2] - face.bbox[0]
+    # Tightened centering — was 12% (too loose, allowed clearly off-center
+    # faces). 7% means the face center must sit within the inner core of
+    # the oval to count as "in".
+    centered = (abs(fx - cx) / w < 0.07) and (abs(fy - cy) / h < 0.10)
+    big_enough = fw >= 200
+    not_too_big = fw <= 360
+    fit_ok = centered and big_enough and not_too_big and not occ.any
 
-    SESSION.last_status = {"quality": {
-        "pose_matches": pose_matches,
-        "reason": reason,
-        "detected_pose": q.pose.value,
-        "occluded": occ.any,
-    }}
+    # Sharpness gate — Laplacian variance on the face crop only (cheap)
+    x1, y1, x2, y2 = face.bbox
+    crop = frame[max(0, int(y1)):int(y2), max(0, int(x1)):int(x2)]
+    sharp_value = (laplacian_sharpness(crop) if crop.size > 0 else 0.0)
+    sharp = sharp_value >= SESSION.SHARPNESS_MIN
 
-    prog = SESSION.progress()
-    prog["live"] = {
-        "face_count": len(faces),
-        "detected_pose": q.pose.value,
-        "target_pose": SESSION.current_target.value,
-        "pose_matches": pose_matches,
-        "reason": reason,
-        "det_score": q.det_score,
-        "occluded": occ.any,
-        "sunglasses": occ.sunglasses,
-        "mask": occ.mask,
+    yaw, pitch, _ = face.pose
+
+    # Cache the latest detection so the MJPEG overlay can draw live debug
+    # geometry on top of the video (landmarks, eye line, yaw/pitch indicator).
+    SESSION.last_detection = {
+        "landmarks": np.asarray(face.landmarks, dtype=np.float32).copy(),
+        "bbox":      tuple(int(v) for v in face.bbox),
+        "yaw":       float(yaw),
+        "pitch":     float(pitch),
     }
+
+    quality = {
+        "in_oval":      bool(fit_ok),
+        "not_occluded": not occ.any,
+        "sharp":        bool(sharp),
+        "sharp_value":  round(sharp_value, 1),
+        "det_score":    round(float(face.det_score), 3),
+    }
+
+    live = {
+        "face_count":       1,
+        "occluded":         occ.any,
+        "occlusion_reason": occ.reason,
+        "face_in_oval":     bool(fit_ok),
+        "yaw":              round(float(yaw), 1),
+        "pitch":            round(float(pitch), 1),
+        "quality":          quality,
+    }
+
+    STEP_PROMPTS = {
+        "left":  "Turn your head LEFT",
+        "right": "Turn your head RIGHT",
+        "up":    "Tilt your head UP",
+        "down":  "Tilt your head DOWN",
+    }
+
+    # Pre-aligned crop for capture / augmentation
+    try:
+        aligned = ENGINE.aligned_crop(frame, face.landmarks)
+    except Exception:
+        aligned = None
+
+    # PHASE FIT — wait for face to be centered + sized in the oval
+    if SESSION.phase == SESSION.PHASE_FIT:
+        if occ.any:
+            live["instruction"] = occ.reason
+        elif not big_enough:
+            live["instruction"] = "Move closer"
+        elif not not_too_big:
+            live["instruction"] = "Move back a little"
+        elif not centered:
+            live["instruction"] = "Center your face in the oval"
+        elif not sharp:
+            live["instruction"] = "Hold still — too blurry"
+        elif face.det_score < SESSION.DET_SCORE_MIN:
+            live["instruction"] = "Adjust your position"
+        else:
+            SESSION.fit_ok(embedding=face.embedding, aligned_crop=aligned)
+            live["instruction"] = STEP_PROMPTS["left"]
+            ENROLL_LOG.info(f"FIT_OK -> SWEEP  sid={SESSION.session_id[:8]} "
+                            f"yaw={yaw:+.1f} pitch={pitch:+.1f} "
+                            f"det_score={face.det_score:.2f} sharp={sharp_value:.0f}")
+        prog = SESSION.progress()
+        prog["live"] = live
+        return jsonify(prog)
+
+    # PHASE SWEEP — guided 4-step sequence with live progress feedback
+    if SESSION.phase == SESSION.PHASE_SWEEP:
+        if not (big_enough and not_too_big and not occ.any and centered):
+            live["instruction"] = (occ.reason if occ.any
+                                   else "Keep your face centered in the oval")
+            prog = SESSION.progress()
+            prog["live"] = live
+            return jsonify(prog)
+
+        upd = SESSION.update_sweep(yaw, pitch, face.embedding,
+                                     aligned_crop=aligned)
+        prog = SESSION.progress()
+
+        # Throttled per-poll trace — every ~300ms while in sweep, plus
+        # always-on trace for capture and timeout transitions
+        now = time.time()
+        last = getattr(SESSION, "_last_trace_at", 0.0)
+        if now - last >= 0.3 or upd["captured"]:
+            SESSION._last_trace_at = now
+            ENROLL_LOG.debug(
+                f"SWEEP sid={SESSION.session_id[:8]} step={upd['current_step']:5} "
+                f"armed={'Y' if upd.get('armed') else 'n'} "
+                f"yaw={yaw:+5.1f} pitch={pitch:+5.1f} "
+                f"sm_yaw={upd['smoothed_yaw']:+5.1f} sm_pitch={upd['smoothed_pitch']:+5.1f} "
+                f"value={upd['step_value']:+5.1f} target={upd['step_target']:.1f} "
+                f"best={upd['best_so_far']:+5.1f} "
+                f"prog={upd['progress']:5.1f}% "
+                f"timeout_left={upd['timeout_sec_left']:.1f}s "
+                f"sharp={sharp_value:.0f} det={face.det_score:.2f}"
+            )
+        if upd["captured"]:
+            ENROLL_LOG.info(
+                f"CAPTURED sid={SESSION.session_id[:8]} step={upd['current_step']} "
+                f"value={upd['step_value']:+5.1f} target={upd['step_target']:.1f} "
+                f"best={upd['best_so_far']:+5.1f} "
+                f"reason={upd.get('capture_reason', '?')}"
+            )
+
+        live.update({
+            "smoothed_yaw":     round(upd["smoothed_yaw"], 1),
+            "smoothed_pitch":   round(upd["smoothed_pitch"], 1),
+            "progress":         round(upd["progress"], 1),
+            "step_value":       upd["step_value"],
+            "step_target":      upd["step_target"],
+            "best_so_far":      upd["best_so_far"],
+            "timeout_sec_left": round(upd["timeout_sec_left"], 1),
+        })
+        # Stash sweep-state into the detection cache too so the overlay can
+        # show the per-step progress alongside the geometry.
+        if SESSION.last_detection is not None:
+            SESSION.last_detection.update({
+                "step":         upd["current_step"],
+                "step_value":   upd["step_value"],
+                "step_target":  upd["step_target"],
+                "best_so_far":  upd["best_so_far"],
+                "progress":     upd["progress"],
+                "armed":        upd.get("armed", False),
+                "smoothed_yaw":   upd["smoothed_yaw"],
+                "smoothed_pitch": upd["smoothed_pitch"],
+            })
+
+        if upd["captured"]:
+            log.info(f"enroll: captured '{upd['current_step']}' for {SESSION.emp_id} "
+                     f"(value={upd['step_value']}, target={upd['step_target']})")
+
+        if SESSION.phase == SESSION.PHASE_DONE:
+            live["instruction"] = "Done!"
+        elif prog["current_step"]:
+            live["instruction"] = STEP_PROMPTS[prog["current_step"]]
+        else:
+            live["instruction"] = "Done!"
+
+        prog["live"] = live
+        return jsonify(prog)
+
+    # PHASE DONE — frontend will call /finish next
+    live["instruction"] = "Done!"
+    prog = SESSION.progress()
+    prog["live"] = live
     return jsonify(prog)
 
 
 @app.route("/api/enroll/capture", methods=["POST"])
 @basic_auth
 def api_enroll_capture():
-    """Capture one sample for the current target pose."""
+    """Manual override — usually the new /status endpoint auto-advances on its
+    own, but this lets the client force a capture for the current step from
+    whatever pose the user is in right now (useful for debugging)."""
     if not SESSION.active:
         return jsonify(error="no session"), 400
-
     frame = CAMERA.latest_frame()
     if frame is None:
         return jsonify(error="no frame"), 503
-
     faces = ENGINE.detect(frame)
     if not faces:
         return jsonify(error="no face"), 422
-
     face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    q = evaluate_face(face, frame.shape, min_face_px=200, min_det_score=0.85)
-
     occ = occlusion.detect(frame, face.landmarks, face.bbox)
     if occ.any:
         return jsonify(error=occ.reason), 422
-    if q.pose != SESSION.current_target:
-        return jsonify(error=f"wrong pose (got {q.pose.value}, "
-                             f"need {SESSION.current_target.value})"), 422
-    if not (q.in_frame and q.big_enough and q.centered):
-        return jsonify(error=q.reason), 422
-
-    x1, y1, x2, y2 = face.bbox
-    crop = frame[max(0, y1):y2, max(0, x1):x2]
-    SESSION.add_sample(SESSION.current_target, face.embedding, crop)
-    log.info(f"captured {SESSION.current_target.value} for {SESSION.emp_id}")
+    try:
+        aligned = ENGINE.aligned_crop(frame, face.landmarks)
+    except Exception:
+        aligned = None
+    if SESSION.phase == SESSION.PHASE_FIT:
+        SESSION.fit_ok(embedding=face.embedding, aligned_crop=aligned)
+    elif SESSION.phase == SESSION.PHASE_SWEEP:
+        # Force-feed the current pose enough times to satisfy the smoother
+        yaw, pitch, _ = face.pose
+        for _ in range(SESSION.SMOOTH_WINDOW):
+            SESSION.update_sweep(yaw, pitch, face.embedding, aligned_crop=aligned)
     return jsonify(SESSION.progress())
 
 
@@ -592,7 +1074,35 @@ def api_enroll_finish():
     if not SESSION.is_complete():
         return jsonify(error="incomplete"), 400
 
-    embs = np.stack(list(SESSION.samples.values())).astype(np.float32)
+    # Liveness: capturing 4 different head poses (left, right, up, down) in
+    # sequence is essentially impossible for a static photo, so the sweep
+    # itself proves liveness — no separate check needed.
+
+    embs = SESSION.all_embeddings()
+    if embs.shape[0] == 0:
+        return jsonify(error="no embeddings collected"), 400
+
+    # ---------- Augmentation: horizontal flip ----------
+    # ArcFace embeddings of flip(face) are similar but not identical to
+    # embeddings of face — typically cos_sim ~0.85-0.95 between the two,
+    # which gives us free pose variation. Doubles the gallery size for
+    # the cost of one rec model pass per crop.
+    augmented_count = 0
+    try:
+        flipped_embs = []
+        for crop in SESSION.all_crops():
+            flipped = cv2.flip(crop, 1)
+            e = ENGINE.embed_aligned(flipped)
+            # Defensive normalize — adapter SHOULD have done it, but be sure
+            n = float(np.linalg.norm(e))
+            if n > 1e-9:
+                flipped_embs.append((e / n).astype(np.float32))
+        if flipped_embs:
+            embs = np.concatenate([embs, np.stack(flipped_embs)], axis=0)
+            augmented_count = len(flipped_embs)
+    except Exception as e:
+        log.warning(f"enroll: augmentation skipped ({type(e).__name__}: {e})")
+
     DB.upsert_employee(
         emp_id=SESSION.emp_id, name=SESSION.name,
         embeddings=embs,
@@ -600,9 +1110,13 @@ def api_enroll_finish():
     )
     info = {
         "emp_id": SESSION.emp_id, "name": SESSION.name,
-        "samples": len(embs),
+        "samples": int(embs.shape[0]),
+        "augmented": augmented_count,
     }
     log.info(f"enrollment complete: {info}")
+    ENROLL_LOG.info(f"FINISH sid={SESSION.session_id[:8]} "
+                    f"emp_id={SESSION.emp_id} samples={info['samples']} "
+                    f"augmented={info.get('augmented', 0)}")
     SESSION.reset()
     return jsonify(ok=True, **info)
 
@@ -719,6 +1233,67 @@ def api_stats_daily():
         entry = by_date.get(d, {"date": d, "in_count": 0, "out_count": 0})
         out.append(entry)
     return jsonify(days=out)
+
+
+@app.route("/api/sheets/status")
+@basic_auth
+def api_sheets_status():
+    return jsonify(SHEETS.status())
+
+
+@app.route("/api/sheets/configure", methods=["POST"])
+@basic_auth
+def api_sheets_configure():
+    data = request.get_json(force=True) or {}
+    raw = data.get("url") or data.get("id") or ""
+    worksheet = (data.get("worksheet") or "").strip() or None
+    try:
+        SHEETS.configure(raw, worksheet=worksheet)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(ok=True, status=SHEETS.status())
+
+
+@app.route("/api/sheets/test", methods=["POST"])
+@basic_auth
+def api_sheets_test():
+    ok, msg = SHEETS.test_connection()
+    return jsonify(ok=ok, message=msg, status=SHEETS.status())
+
+
+@app.route("/api/sheets/upload_credentials", methods=["POST"])
+@basic_auth
+def api_sheets_upload_credentials():
+    """Accept a service-account JSON via multipart upload OR JSON-string body.
+
+    Saves to <project>/config/credentials.json after validation. Replaces any
+    existing file. After this call the SheetsSync's cached service email is
+    invalidated so /api/sheets/status will show the new one immediately.
+    """
+    json_text = None
+    f = request.files.get("file")
+    if f is not None:
+        try:
+            json_text = f.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return jsonify(ok=False, error="file is not UTF-8 text"), 400
+    else:
+        body = request.get_json(silent=True) or {}
+        json_text = body.get("json")
+    if not json_text:
+        return jsonify(ok=False, error="no file or 'json' body provided"), 400
+
+    ok, msg = SHEETS.install_credentials(json_text)
+    code = 200 if ok else 400
+    return jsonify(ok=ok, message=msg, status=SHEETS.status()), code
+
+
+@app.route("/api/sheets/sync_now", methods=["POST"])
+@basic_auth
+def api_sheets_sync_now():
+    """Force a sync attempt right now instead of waiting for the next interval."""
+    count, err = SHEETS.sync_pending()
+    return jsonify(ok=err is None, synced=count, error=err, status=SHEETS.status())
 
 
 @app.route("/employee/<emp_id>")
