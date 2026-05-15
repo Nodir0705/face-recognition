@@ -2,7 +2,7 @@
 {% block title %}Enroll · Attendance{% endblock %}
 {% block head %}
 <style>
-  .wizard { max-width: 560px; margin: 0 auto; }
+  .wizard { max-width: 600px; margin: 0 auto; }
   .step { display: none; }
   .step.active { display: block; }
 
@@ -10,55 +10,76 @@
   .form-row label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   .form-row input { width: 100%; }
 
-  .preview-wrap {
+  /* Stage: square video frame with portrait oval guide overlaid */
+  .stage {
     position: relative;
     width: 100%;
-    aspect-ratio: 4 / 3;
-    background: #111;
+    aspect-ratio: 1 / 1;
+    background: #0a0a0a;
     border-radius: var(--radius);
     overflow: hidden;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
-  .preview-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
-  /* Tiny live readout pinned over the preview */
-  .live-status {
-    position: absolute;
-    top: 12px; right: 12px;
-    background: rgba(0,0,0,0.55);
-    color: white;
-    padding: 6px 10px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-weight: 500;
-    backdrop-filter: blur(4px);
+  .oval-ring     { fill: none; stroke: rgba(255,255,255,.85); stroke-width: 0.7; transition: stroke 0.2s; }
+  .oval-ring.fit { stroke: #16a34a; stroke-width: 1.0; }
+
+  /* Big direction arrow centered in the video */
+  .arrow {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 110px; font-weight: 700;
+    color: rgba(255,255,255,.9);
+    text-shadow: 0 4px 20px rgba(0,0,0,.7);
+    pointer-events: none;
+    transition: color 0.15s, transform 0.15s;
   }
-  .live-status.ok { background: rgba(22, 163, 74, 0.85); }
-  .live-status.warn { background: rgba(217, 119, 6, 0.85); }
+  .arrow.captured { color: #16a34a; transform: scale(1.25); }
+  .arrow.empty { display: none; }
 
-  /* Pose pills */
-  .pose-row { display: flex; gap: 8px; margin-bottom: 16px; }
-  .pose-pill {
-    flex: 1;
-    text-align: center;
-    padding: 12px 4px;
-    border-radius: 8px;
-    background: #f3f1ea;
-    font-size: 12px;
-    color: var(--muted);
-    transition: all 0.2s;
+  .instruction {
+    position: absolute; left: 0; right: 0; top: 14px;
+    text-align: center; color: white; font-weight: 600; font-size: 18px;
+    text-shadow: 0 2px 6px rgba(0,0,0,.7);
+    pointer-events: none;
+  }
+
+  /* Pose readout — bottom-left, monospace */
+  .readout {
+    position: absolute; left: 12px; bottom: 12px;
+    color: rgba(255,255,255,.7); font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    pointer-events: none;
+  }
+
+  /* Live progress bar — bottom of the stage, shows pose-toward-target % */
+  .progress-track {
+    position: absolute; left: 18%; right: 18%; bottom: 36px;
+    height: 8px; border-radius: 4px;
+    background: rgba(255,255,255,.18); overflow: hidden;
+    pointer-events: none;
+  }
+  .progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #f59e0b, #16a34a);
+    transition: width 0.12s linear;
+  }
+  .progress-track.hidden { display: none; }
+
+  /* Step pips below the video */
+  .pips { display: flex; gap: 8px; margin-bottom: 14px; }
+  .pip {
+    flex: 1; text-align: center; padding: 10px 4px;
+    border-radius: 8px; background: #f3f1ea;
+    color: var(--muted); font-size: 13px; font-weight: 500;
     border: 2px solid transparent;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
   }
-  .pose-pill.active {
-    background: #dbeafe;
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .pose-pill.done {
-    background: var(--success-bg);
-    color: var(--success);
-  }
-  .pose-pill .icon { font-size: 20px; display: block; margin-bottom: 4px; }
+  .pip.active { background: #dbeafe; color: var(--accent); border-color: var(--accent); }
+  .pip.done   { background: var(--success-bg); color: var(--success); }
+  .pip .ico { display: block; font-size: 18px; margin-bottom: 2px; }
 
   .action-row { display: flex; gap: 8px; }
   .action-row button { flex: 1; padding: 14px; font-size: 15px; }
@@ -68,20 +89,16 @@
   .done-check {
     width: 80px; height: 80px;
     border-radius: 50%;
-    background: var(--success-bg);
-    color: var(--success);
+    background: var(--success-bg); color: var(--success);
     margin: 0 auto 20px;
     display: flex; align-items: center; justify-content: center;
     font-size: 44px;
-  }
-  .countdown {
-    font-size: 13px; color: var(--muted); margin-top: 8px;
   }
 </style>
 {% endblock %}
 {% block body %}
 <h1>Enroll new employee</h1>
-<p class="muted">The new hire stands in front of the kiosk camera. You enter their details and walk them through the head movements.</p>
+<p class="muted">Have the new hire stand 80–120 cm from the camera. Fit their face in the oval, then follow the four prompts: turn left, right, up, down.</p>
 
 <div class="wizard card">
 
@@ -112,28 +129,30 @@
   <!-- STEP 2 -->
   <div class="step" id="step-2">
     <h2 style="margin-top: 0;">Step 2 · Face capture</h2>
-    <p class="muted" id="step2-sub">Have the employee stand 80–120 cm from the camera.</p>
 
-    <div class="preview-wrap">
+    <div class="stage" id="stage">
       <img id="preview" src="" alt="Live preview">
-      <div class="live-status" id="live-status">Connecting…</div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <ellipse id="ovalRing" class="oval-ring" cx="50" cy="50" rx="22" ry="30"></ellipse>
+      </svg>
+      <div class="instruction" id="instruction">Connecting…</div>
+      <div class="arrow empty" id="arrow"></div>
+      <div class="progress-track hidden" id="progressTrack">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="readout" id="readout"></div>
     </div>
 
-    <div class="pose-row" id="pose-row">
-      <div class="pose-pill active" data-pose="center"><span class="icon">●</span><div>Center</div></div>
-      <div class="pose-pill" data-pose="left"><span class="icon">◀</span><div>Left</div></div>
-      <div class="pose-pill" data-pose="right"><span class="icon">▶</span><div>Right</div></div>
-      <div class="pose-pill" data-pose="up"><span class="icon">▲</span><div>Up</div></div>
-      <div class="pose-pill" data-pose="down"><span class="icon">▼</span><div>Down</div></div>
+    <div class="pips" id="pips">
+      <div class="pip" data-step="left"><span class="ico">←</span>Left</div>
+      <div class="pip" data-step="right"><span class="ico">→</span>Right</div>
+      <div class="pip" data-step="up"><span class="ico">↑</span>Up</div>
+      <div class="pip" data-step="down"><span class="ico">↓</span>Down</div>
     </div>
 
     <div class="action-row">
       <button class="secondary" onclick="cancelEnrollment()">Cancel</button>
-      <button id="capture-btn" onclick="captureNow()">Capture (or auto)</button>
     </div>
-    <p class="muted" style="margin-top: 12px; font-size: 12px;">
-      Hold each pose for ~1 second — the system auto-captures when pose is stable.
-    </p>
   </div>
 
   <!-- STEP 3 -->
@@ -153,109 +172,113 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+const ARROWS = { left: '←', right: '→', up: '↑', down: '↓' };
 let pollTimer = null;
-let stableFrames = 0;
-const STABLE_THRESHOLD = 4;   // ~1s at 250ms polling
+let lastCapturedStep = null;
+let captureFlashUntil = 0;
 
 async function goToStep2() {
   const emp_id = $('emp-id').value.trim();
-  const name = $('emp-name').value.trim();
-  if (!emp_id || !name) {
-    alert('ID and name are required.');
-    return;
-  }
+  const name   = $('emp-name').value.trim();
+  if (!emp_id || !name) { alert('ID and name are required.'); return; }
   const r = await fetch('/api/enroll/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       emp_id, name,
       department: $('emp-dept').value.trim(),
-      email: $('emp-email').value.trim(),
+      email:      $('emp-email').value.trim(),
     }),
   });
   if (!r.ok) { alert('failed to start: ' + r.status); return; }
-
-  // Wire up live preview
   $('preview').src = '/api/enroll_stream?t=' + Date.now();
   $('step-1').classList.remove('active');
   $('step-2').classList.add('active');
+  resetUI();
   startPolling();
+}
+
+function resetUI() {
+  $('ovalRing').classList.remove('fit');
+  $('arrow').classList.add('empty');
+  $('arrow').classList.remove('captured');
+  $('progressTrack').classList.add('hidden');
+  $('progressFill').style.width = '0%';
+  $('readout').textContent = '';
+  document.querySelectorAll('.pip').forEach(p => p.classList.remove('active', 'done'));
+  lastCapturedStep = null;
+  captureFlashUntil = 0;
 }
 
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(pollStatus, 250);
+  pollTimer = setInterval(pollStatus, 120);
 }
 
 async function pollStatus() {
   let r;
-  try { r = await fetch('/api/enroll/status'); }
-  catch (e) { return; }
+  try { r = await fetch('/api/enroll/status'); } catch (e) { return; }
   if (!r.ok) return;
   const s = await r.json();
   if (!s.active) return;
 
-  // Update pose pills
-  document.querySelectorAll('.pose-pill').forEach(p => {
-    p.classList.remove('active', 'done');
-    if (s.captured && s.captured.includes(p.dataset.pose)) {
-      p.classList.add('done');
-      p.querySelector('.icon').textContent = '✓';
-    } else if (p.dataset.pose === s.current_target) {
-      p.classList.add('active');
-    }
+  const live = s.live || {};
+  $('instruction').textContent = live.instruction || '';
+
+  // Oval green the moment the face fits, regardless of phase
+  const ovalGreen = (s.phase !== 'fit') || live.face_in_oval === true;
+  $('ovalRing').classList.toggle('fit', ovalGreen);
+
+  // Step pips
+  (s.steps || []).forEach(st => {
+    const pip = document.querySelector(`.pip[data-step="${st.label}"]`);
+    if (!pip) return;
+    pip.classList.toggle('active', st.state === 'active');
+    pip.classList.toggle('done',   st.state === 'done');
   });
 
-  // Update live status badge
-  const live = s.live || {};
-  const status = $('live-status');
-  status.classList.remove('ok', 'warn');
-  if (live.face_count === 0) {
-    status.textContent = 'No face detected';
-    status.classList.add('warn');
-    stableFrames = 0;
-  } else if (live.occluded) {
-    // Occlusion takes priority — capture would be blocked anyway.
-    status.textContent = live.reason || 'Face is partly covered';
-    status.classList.add('warn');
-    stableFrames = 0;
-  } else if (live.pose_matches) {
-    status.textContent = `${live.target_pose} ✓ holding…`;
-    status.classList.add('ok');
-    stableFrames++;
-    if (stableFrames >= STABLE_THRESHOLD) {
-      stableFrames = 0;
-      autoCapture();
+  // Direction arrow + progress bar (sweep phase only)
+  if (s.phase === 'sweep' && s.current_step) {
+    const arrow = $('arrow');
+    arrow.textContent = ARROWS[s.current_step] || '';
+    arrow.classList.remove('empty');
+
+    // Capture flash — when a step just completed, briefly turn arrow green
+    if (s.step_idx > 0 && s.steps && s.steps[s.step_idx - 1] &&
+        s.steps[s.step_idx - 1].state === 'done' &&
+        s.steps[s.step_idx - 1].label !== lastCapturedStep) {
+      lastCapturedStep = s.steps[s.step_idx - 1].label;
+      captureFlashUntil = Date.now() + 600;
     }
-  } else if (live.reason && live.reason !== 'ok') {
-    status.textContent = live.reason;
-    status.classList.add('warn');
-    stableFrames = 0;
+    arrow.classList.toggle('captured', Date.now() < captureFlashUntil);
+
+    $('progressTrack').classList.remove('hidden');
+    const pct = Math.max(0, Math.min(100, live.progress || 0));
+    $('progressFill').style.width = pct + '%';
   } else {
-    status.textContent = `detected: ${live.detected_pose || '—'} · need: ${live.target_pose}`;
-    stableFrames = 0;
+    $('arrow').classList.add('empty');
+    $('arrow').classList.remove('captured');
+    $('progressTrack').classList.add('hidden');
   }
 
-  // Done?
+  // Readout — yaw/pitch + per-step value/target/timeout
+  if (typeof live.yaw === 'number' || typeof live.smoothed_yaw === 'number') {
+    const sy = live.smoothed_yaw ?? live.yaw;
+    const sp = live.smoothed_pitch ?? live.pitch;
+    let txt = `yaw ${sy.toFixed(1)}°  pitch ${sp.toFixed(1)}°`;
+    if (typeof live.step_value === 'number') {
+      txt += `  →  ${live.step_value}/${live.step_target}`;
+    }
+    if (typeof live.timeout_sec_left === 'number' && s.phase === 'sweep') {
+      txt += `  ⏱ ${live.timeout_sec_left.toFixed(1)}s`;
+    }
+    $('readout').textContent = txt;
+  } else {
+    $('readout').textContent = '';
+  }
+
   if (s.complete) {
     clearInterval(pollTimer);
     await finalize();
-  }
-}
-
-async function autoCapture() { captureNow(true); }
-
-async function captureNow(silent = false) {
-  const btn = $('capture-btn');
-  btn.disabled = true;
-  try {
-    const r = await fetch('/api/enroll/capture', { method: 'POST' });
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      if (!silent) alert(data.error || 'capture failed');
-    }
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -264,8 +287,9 @@ async function finalize() {
   const data = await r.json();
   if (data.ok) {
     $('preview').src = '';
+    const aug = data.augmented ? ` (incl. ${data.augmented} augmented)` : '';
     $('done-summary').textContent =
-      `${data.samples} face samples captured for ${data.name} (${data.emp_id})`;
+      `${data.samples} face samples captured for ${data.name} (${data.emp_id})${aug}`;
     $('step-2').classList.remove('active');
     $('step-3').classList.add('active');
   } else {
@@ -282,12 +306,7 @@ async function cancelEnrollment() {
 
 function restart() {
   ['emp-id','emp-name','emp-dept','emp-email'].forEach(id => $(id).value = '');
-  document.querySelectorAll('.pose-pill').forEach((p, i) => {
-    p.classList.remove('done');
-    p.classList.toggle('active', i === 0);
-    const icons = ['●','◀','▶','▲','▼'];
-    p.querySelector('.icon').textContent = icons[i];
-  });
+  resetUI();
   $('step-2').classList.remove('active');
   $('step-3').classList.remove('active');
   $('step-1').classList.add('active');

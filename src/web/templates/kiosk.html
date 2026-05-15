@@ -134,7 +134,9 @@ async function pollState() {
     }
   } catch (e) { /* keep polling */ }
 }
-setInterval(pollState, 500);
+// 200ms polling — fast enough that the green tick / banner appear near-instantly
+// when Hailo recognizes someone, slow enough not to flood the Flask app.
+setInterval(pollState, 200);
 pollState();
 
 // Tap anywhere on the screen to dismiss the current greeting early.
