@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Face-ID kiosk: full-screen camera, corner-bracket overlay tracks face,
+  recognition card pops in at center-upper area (prominent, eye-level read),
+  hint floats above any system soft-bar at the bottom.
+-->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <com.example.attendancespike.FaceBoxOverlay
+        android:id="@+id/faceBoxOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Clock — top-left, subtle -->
+    <TextView
+        android:id="@+id/clockText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="20dp"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:alpha="0.85"
+        android:shadowColor="#000000"
+        android:shadowRadius="4"
+        android:shadowDx="0"
+        android:shadowDy="1" />
+
+    <!-- Gear icon — top-right, opens EnrollActivity -->
+    <ImageView
+        android:id="@+id/gearIcon"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:padding="8dp"
+        android:src="@drawable/gear_icon"
+        android:contentDescription="@string/settings"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <!-- Recognition card — bottom-center, above any soft-button bar.
+         Scales up on match. Stays visible 4 seconds. -->
+    <LinearLayout
+        android:id="@+id/recognitionGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="14dp"
+        android:paddingHorizontal="28dp"
+        android:background="@drawable/recog_card_bg"
+        android:elevation="6dp"
+        android:alpha="0">
+
+        <ImageView
+            android:id="@+id/recogCheck"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/check_circle"
+            android:contentDescription="@null" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginStart="14dp">
+
+            <TextView
+                android:id="@+id/recogName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/recogStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#A7F3D0"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Hint — bottom-center pill with bottom margin to clear soft-button bar -->
+    <TextView
+        android:id="@+id/hintText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="96dp"
+        android:paddingHorizontal="24dp"
+        android:paddingVertical="10dp"
+        android:background="@drawable/hint_pill_bg"
+        android:text="@string/hint_look_at_camera"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:alpha="0" />
+</FrameLayout>

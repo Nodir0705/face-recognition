@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Three-step enrollment wizard, native port of src/web/templates/enroll.html.
+  Steps switch via visibility (GONE/VISIBLE).
+-->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FAFAF7">
+
+    <!-- =================  STEP 1 · DETAILS  ================= -->
+    <ScrollView
+        android:id="@+id/stepForm"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="20dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/enroll_step1_heading"
+                android:textColor="#222222"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/enroll_step1_subtitle"
+                android:textColor="#6A6A66"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/enroll_field_emp_id"
+                android:textColor="#6A6A66"
+                android:textSize="13sp"
+                android:layout_marginBottom="6dp" />
+            <EditText
+                android:id="@+id/empIdInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/enroll_field_emp_id_hint"
+                android:inputType="textCapCharacters"
+                android:background="@drawable/edit_text_bg"
+                android:padding="12dp"
+                android:textColor="#222222"
+                android:textColorHint="#9CA39A"
+                android:textSize="15sp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/enroll_field_name"
+                android:textColor="#6A6A66"
+                android:textSize="13sp"
+                android:layout_marginBottom="6dp" />
+            <EditText
+                android:id="@+id/empNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/enroll_field_name_hint"
+                android:inputType="textPersonName"
+                android:background="@drawable/edit_text_bg"
+                android:padding="12dp"
+                android:textColor="#222222"
+                android:textColorHint="#9CA39A"
+                android:textSize="15sp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/enroll_field_dept"
+                android:textColor="#6A6A66"
+                android:textSize="13sp"
+                android:layout_marginBottom="6dp" />
+            <EditText
+                android:id="@+id/empDeptInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/enroll_field_dept_hint"
+                android:inputType="text"
+                android:background="@drawable/edit_text_bg"
+                android:padding="12dp"
+                android:textColor="#222222"
+                android:textColorHint="#9CA39A"
+                android:textSize="15sp"
+                android:layout_marginBottom="16dp" />
+
+            <Button
+                android:id="@+id/continueButton"
+                android:layout_marginTop="12dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="52dp"
+                android:text="@string/continue_btn"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:background="@drawable/btn_primary_bg" />
+
+            <Button
+                android:id="@+id/formCancelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minHeight="48dp"
+                android:text="@string/cancel_btn"
+                android:textColor="#222222"
+                android:textSize="15sp"
+                android:background="@drawable/btn_secondary_bg" />
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- =================  STEP 2 · FACE CAPTURE  ================= -->
+    <FrameLayout
+        android:id="@+id/stepCapture"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/enrollPreviewView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.example.attendancespike.FaceGuideView
+            android:id="@+id/enrollFaceGuide"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Instruction text at top -->
+        <TextView
+            android:id="@+id/instructionText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="36dp"
+            android:gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:shadowColor="#000000"
+            android:shadowRadius="6"
+            android:shadowDx="0"
+            android:shadowDy="2"
+            android:paddingHorizontal="16dp"
+            android:text="@string/instr_fit_face" />
+
+        <!-- Big direction arrow centered over the oval -->
+        <TextView
+            android:id="@+id/arrowText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="120sp"
+            android:textStyle="bold"
+            android:shadowColor="#000000"
+            android:shadowRadius="20"
+            android:shadowDx="0"
+            android:shadowDy="4"
+            android:alpha="0"
+            android:text="@string/arrow_left" />
+
+        <!-- Bottom panel: pips + progress + readout + cancel -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:background="#B3000000">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/pipLeft"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:textColor="#6A6A66"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/pip_default"
+                    android:text="@string/pip_left" />
+
+                <TextView
+                    android:id="@+id/pipRight"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:textColor="#6A6A66"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/pip_default"
+                    android:text="@string/pip_right" />
+
+                <TextView
+                    android:id="@+id/pipUp"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:textColor="#6A6A66"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/pip_default"
+                    android:text="@string/pip_up" />
+
+                <TextView
+                    android:id="@+id/pipDown"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:textColor="#6A6A66"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/pip_default"
+                    android:text="@string/pip_down" />
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/poseProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_marginTop="12dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/progress_bar_bg" />
+
+            <TextView
+                android:id="@+id/readoutText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="#B3FFFFFF"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:gravity="center" />
+
+            <Button
+                android:id="@+id/captureCancelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minHeight="44dp"
+                android:text="@string/cancel_btn"
+                android:textColor="#222222"
+                android:textSize="14sp"
+                android:background="@drawable/btn_secondary_bg" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- =================  STEP 3 · DONE  ================= -->
+    <LinearLayout
+        android:id="@+id/stepDone"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:src="@drawable/check_circle"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/enroll_done_heading"
+            android:textColor="#222222"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/doneSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:textColor="#6A6A66"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/enrollAnotherButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:minHeight="52dp"
+            android:text="@string/enroll_another"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@drawable/btn_primary_bg" />
+
+        <Button
+            android:id="@+id/backToKioskButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/enroll_back_to_kiosk"
+            android:textColor="#222222"
+            android:textSize="15sp"
+            android:background="@drawable/btn_secondary_bg" />
+    </LinearLayout>
+
+        <!-- Loading veil over the preview while CameraX spins up (~3-4s).
+             Shown on entry to the capture step, hidden on the first analyzed
+             frame so the user never stares at a black preview surface. -->
+        <LinearLayout
+            android:id="@+id/captureLoading"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="#0B1020"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:indeterminate="true" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:text="@string/camera_starting" />
+        </LinearLayout>
+    </FrameLayout>
