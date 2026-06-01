@@ -1,0 +1,25 @@
+Drop the MobileFaceNet TFLite model into THIS directory as:
+
+    mobile_face_net.tflite
+
+The app expects:
+  - input  : float32, NHWC, 1x112x112x3, range [-1, 1]
+  - output : float32, 1x192 embedding
+
+Known-good sources (~5MB each):
+
+  1. sirius-ai/MobileFaceNet_TF
+       https://github.com/sirius-ai/MobileFaceNet_TF
+       Convert MobileFaceNet_9925_9680.pb -> .tflite via:
+         tflite_convert --graph_def_file=MobileFaceNet_9925_9680.pb \
+           --output_file=mobile_face_net.tflite \
+           --input_arrays=img_inputs --output_arrays=embeddings \
+           --input_shapes=1,112,112,3
+
+  2. estebanuri/face_recognition
+       https://github.com/estebanuri/face_recognition
+       Ships a pre-converted mobile_face_net.tflite under
+         /android/.../app/src/main/assets/
+
+If your model outputs 128 or 512 instead of 192, edit EMBEDDING_DIM
+in FaceEmbedder.kt to match.
