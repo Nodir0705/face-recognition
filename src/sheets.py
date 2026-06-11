@@ -300,7 +300,7 @@ class SheetsSync:
         last_ts_str = self.db.get_setting(KEY_LAST_SYNC_TS)
         last_ok_str = self.db.get_setting(KEY_LAST_SYNC_OK)
         last_err = self.db.get_setting(KEY_LAST_ERROR) or ""
-        pending = len(self.db.pending_sync(limit=10000))
+        pending = self.db.count_pending_sync()
         return {
             "configured":            self.is_configured(),
             "credentials_present":   self.credentials_present(),

@@ -228,11 +228,23 @@ class HailoArcFace:
         return rgb[None, ...]
 
     def embed(self, infer_pipe, aligned_bgr):
-        x = self.preprocess(aligned_bgr)
-        out = infer_pipe.infer({self.input_name: x})[self.output_name]
-        v = out.flatten().astype(np.float32)
-        n = np.linalg.norm(v)
-        return v / n if n > 1e-9 else v
+        return self.embed_batch(infer_pipe, [aligned_bgr])[0]
+
+    def embed_batch(self, infer_pipe, aligned_bgr_list):
+        """Embed N aligned 112x112 crops in one infer call.
+
+        Returns (N, 512) L2-normalized float32. A single call amortizes the
+        HailoRT scheduler/vstream overhead across all faces in the frame,
+        instead of paying it once per face.
+        """
+        if not aligned_bgr_list:
+            return np.zeros((0, self.EMBED_DIM), dtype=np.float32)
+        batch = np.stack([cv2.cvtColor(a, cv2.COLOR_BGR2RGB)
+                          for a in aligned_bgr_list])
+        out = infer_pipe.infer({self.input_name: batch})[self.output_name]
+        vecs = out.reshape(len(aligned_bgr_list), -1).astype(np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        return vecs / np.maximum(norms, 1e-9)
 
 
 # ----- Gallery loaded from SQLite -----
@@ -388,7 +400,8 @@ def main():
                     fake_dets = [type("D", (), {"bbox": d["bbox"]})() for d in valid]
                     assignments = tracker.update(fake_dets)
 
-                    # ---- Per-track recognition ----
+                    # ---- Per-track recognition (one batched embed call) ----
+                    to_embed = []
                     for tid, det_obj in assignments:
                         d = next((v for v in valid if v["bbox"] == det_obj.bbox), None)
                         if d is None:
@@ -396,7 +409,10 @@ def main():
                         aligned = align_face(frame, d["kps"])
                         if aligned is None:
                             continue
-                        emb = rec.embed(rec_pipe, aligned)
+                        to_embed.append((tid, aligned))
+
+                    embs = rec.embed_batch(rec_pipe, [a for _, a in to_embed])
+                    for (tid, _), emb in zip(to_embed, embs):
                         idx, sim = gallery.match(emb, args.threshold)
 
                         hist = tracker.history(tid)

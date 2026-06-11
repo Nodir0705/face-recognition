@@ -75,14 +75,23 @@ class HailoFaceEngine:
         outs = self._det_pipe.infer({self._det.input_name: blob})
         decoded = self._det.decode(outs)
 
-        out: list[DetectedFace] = []
+        # Align every face first, then embed them all in one batched infer
+        # call — the HailoRT call overhead is paid once per frame instead of
+        # once per face.
+        prepared = []
         for d in decoded:
             x1, y1, x2, y2 = (v / scale for v in d["bbox"])
             kps5 = d["kps"] / scale
             aligned = align_face(frame_bgr, kps5)
             if aligned is None:
                 continue
-            emb = self._rec.embed(self._rec_pipe, aligned)
+            prepared.append((d, (x1, y1, x2, y2), kps5, aligned))
+
+        embs = self._rec.embed_batch(self._rec_pipe,
+                                     [p[3] for p in prepared])
+        out: list[DetectedFace] = []
+        for (d, bbox, kps5, _), emb in zip(prepared, embs):
+            x1, y1, x2, y2 = bbox
             # Geometric pose from landmark ratios — much more reliable than
             # solvePnP-on-5-points for the "is the user turned far enough?"
             # decision the enrollment flow makes.

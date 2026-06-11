@@ -478,17 +478,19 @@ def recognition_loop():
         x1, y1, x2, y2 = bbox
         return f"{(x1 // 80)}:{(y1 // 80)}"  # coarse spatial bin
 
-    while True:
+    def tick():
+        nonlocal emp_ids, names, gallery, last_reload
+
         # Pause recognition while someone is being enrolled
         if SESSION.active:
             STATE.update([])
             time.sleep(0.2)
-            continue
+            return
 
         frame = CAMERA.latest_frame()
         if frame is None:
             time.sleep(0.05)
-            continue
+            return
 
         if time.time() - last_reload > RELOAD_EVERY:
             emp_ids, names, gallery = DB.load_all_embeddings()
@@ -564,8 +566,48 @@ def recognition_loop():
         # poll on the kiosk page).
         time.sleep(0.08)
 
+    while True:
+        # One bad frame or a transient engine/DB error must not kill the
+        # thread — Flask would keep serving while recognition silently died.
+        try:
+            tick()
+        except Exception:
+            log.exception("recognition loop error — backing off 1s")
+            time.sleep(1.0)
+
 
 threading.Thread(target=recognition_loop, daemon=True).start()
+
+
+# ---------- Short-TTL detection cache (enrollment endpoints) ----------
+#
+# /api/enroll/status and /api/enroll/capture each run a full detect() per
+# request. With a single poller (~150 ms apart) the cache rarely hits, but it
+# bounds the inference rate when several requests land at once (a second
+# admin tab, a status poll overlapping a manual capture) — they share one
+# detection instead of stacking redundant inference calls.
+_DETECT_TTL_SEC = 0.05
+_detect_cache_lock = threading.Lock()
+_detect_cache = {"ts": 0.0, "frame": None, "faces": []}
+
+
+def detect_cached():
+    """Return (frame, faces), reusing the last detection if younger than the
+    TTL — the frame and faces always describe the same image."""
+    now = time.monotonic()
+    with _detect_cache_lock:
+        if (_detect_cache["frame"] is not None
+                and now - _detect_cache["ts"] < _DETECT_TTL_SEC):
+            return _detect_cache["frame"], _detect_cache["faces"]
+    frame = CAMERA.latest_frame()
+    if frame is None:
+        return None, []
+    faces = ENGINE.detect(frame)
+    with _detect_cache_lock:
+        _detect_cache["ts"] = time.monotonic()
+        _detect_cache["frame"] = frame
+        _detect_cache["faces"] = faces
+    return frame, faces
 
 
 # ---------- Auth ----------
@@ -849,11 +891,10 @@ def api_enroll_status():
     if not SESSION.active:
         return jsonify(active=False)
 
-    frame = CAMERA.latest_frame()
+    frame, faces = detect_cached()
     if frame is None:
         return jsonify(active=True, error="no frame")
 
-    faces = ENGINE.detect(frame)
     prog = SESSION.progress()
 
     if not faces:
@@ -1044,10 +1085,9 @@ def api_enroll_capture():
     whatever pose the user is in right now (useful for debugging)."""
     if not SESSION.active:
         return jsonify(error="no session"), 400
-    frame = CAMERA.latest_frame()
+    frame, faces = detect_cached()
     if frame is None:
         return jsonify(error="no frame"), 503
-    faces = ENGINE.detect(frame)
     if not faces:
         return jsonify(error="no face"), 422
     face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
