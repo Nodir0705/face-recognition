@@ -34,3 +34,45 @@ Five small, independent diffs from the optimization review:
   multi-frame input dicts, revert to the per-face `embed()` path.
 
 Tests: `pytest -q` → 49 passed, 1 skipped. All modified files byte-compile.
+
+# Task: Optimization batch 2 (2026-06-12)
+
+From the ultracode second-pass sweep (41 candidates, 34 adversarially refuted,
+7 confirmed):
+
+- [x] 1. Enrollment overlay: cached oval mask + cv2.convertScaleAbs blend +
+  np.copyto ROI restore (src/web/app.py). Verified: max pixel diff 1
+  (round vs truncate), 7.78 → 1.35 ms/frame on dev box (5.8x).
+- [x] 2. ~~PRAGMA synchronous=NORMAL after WAL~~ REVERTED after review: a
+  non-durable mark_synced commit rolled back by power cut would replay the
+  Sheets append → duplicate spreadsheet rows. Benefit was ~1s/day of fsync.
+  Kept a comment in db.py documenting the decision.
+- [x] 3. NMSBoxes gets numpy float32 directly, no .tolist() (hailo/recognize_hailo.py).
+  Verified NMSBoxes accepts ndarrays incl. empty-result path.
+- [x] 4. TrackerDet namedtuple replaces per-frame type() class creation
+  (hailo/recognize_hailo.py). Tracker only reads .bbox — verified.
+- [x] 5. Removed redundant .astype(np.float32) on embed_batch rows
+  (hailo/engine_adapter.py)
+- [x] 6. kiosk.html MJPEG watchdog: pollState-driven src reset after server
+  outage (onerror doesn't fire on frozen MJPEG streams). Hardened after
+  review: in-flight poll guard (no stale-fetch races), >=3 consecutive
+  failures before reconnect (no single-blip restarts), r.ok check, onerror
+  backstop for load-time failures. Known accepted limitation: a TCP reset of
+  only the stream socket while Flask stays healthy still freezes the frame —
+  no browser event exists for that; a periodic forced refresh would flicker.
+- [ ] SKIPPED: preallocating the 640x640 preprocess buffer — verifier measured
+  only ~0.06 ms/frame saving (lazy mmap zeroing) and buffer reuse risks stale
+  pad pixels with variable input sizes. Not worth the hazard.
+- [x] Verify: pytest 49 passed; adversarial review panel on the diff
+
+## Review (batch 2)
+
+Adversarial 3-lens panel on the diff: 0 blockers, 4 minors — all addressed:
+- watchdog spurious reconnect on single failed poll → 3-failure threshold
+- stale in-flight fetch re-arming the flag after recovery → pollBusy guard
+- no r.ok check / no load-failure backstop → added both
+- synchronous=NORMAL duplicate-Sheets-rows hazard → reverted the PRAGMA
+
+Verification: pytest 49 passed / 1 skipped; overlay blend benchmarked
+7.78 → 1.35 ms/frame (max pixel diff 1); NMSBoxes numpy path tested incl.
+empty result; kiosk JS passes node --check.

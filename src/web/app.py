@@ -734,6 +734,30 @@ def _draw_kiosk_overlay(frame: np.ndarray) -> np.ndarray:
     return frame
 
 
+# Oval-mask geometry for the enrollment overlay, cached per frame size — the
+# camera resolution never changes mid-session, so this is computed once.
+_ENROLL_OVAL_CACHE: dict[tuple[int, int], tuple] = {}
+
+
+def _enroll_oval(h: int, w: int) -> tuple:
+    key = (h, w)
+    cached = _ENROLL_OVAL_CACHE.get(key)
+    if cached is None:
+        cx, cy = w // 2, h // 2
+        rx = int(min(w, h) * 0.22)
+        ry = int(min(w, h) * 0.30)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(mask, (cx, cy), (rx, ry), 0, 0, 360, 255, -1)
+        # Bounding box of the oval (+2px for the outline) so the per-frame
+        # masked copy only touches the oval region, not the whole frame.
+        x1, y1 = max(cx - rx - 2, 0), max(cy - ry - 2, 0)
+        x2, y2 = min(cx + rx + 2, w), min(cy + ry + 2, h)
+        inside = (mask[y1:y2, x1:x2] > 0)[:, :, None]
+        cached = (cx, cy, rx, ry, x1, y1, x2, y2, inside)
+        _ENROLL_OVAL_CACHE[key] = cached
+    return cached
+
+
 def _draw_enrollment_overlay(frame: np.ndarray) -> np.ndarray:
     """Mirrors the frame (selfie-style) so the user's perception of left/right
     matches their physical motion, then dims outside a portrait oval and
@@ -749,15 +773,13 @@ def _draw_enrollment_overlay(frame: np.ndarray) -> np.ndarray:
     frame = cv2.flip(frame, 1)
 
     h, w = frame.shape[:2]
-    cx, cy = w // 2, h // 2
-    rx = int(min(w, h) * 0.22)
-    ry = int(min(w, h) * 0.30)
+    cx, cy, rx, ry, ox1, oy1, ox2, oy2, inside = _enroll_oval(h, w)
 
-    # Dim outside the oval guide
-    mask = np.ones((h, w), dtype=np.uint8) * 255
-    cv2.ellipse(mask, (cx, cy), (rx, ry), 0, 0, 360, 0, -1)
-    dark = (frame * 0.45).astype(np.uint8)
-    out = np.where(mask[:, :, None] > 0, dark, frame).astype(np.uint8)
+    # Dim outside the oval guide: one SIMD pass for the darkened copy, then
+    # restore the (small) oval interior in place. The old float multiply +
+    # full-frame np.where allocated ~22 MB of float64 temporaries per frame.
+    out = cv2.convertScaleAbs(frame, alpha=0.45)
+    np.copyto(out[oy1:oy2, ox1:ox2], frame[oy1:oy2, ox1:ox2], where=inside)
     cv2.ellipse(out, (cx, cy), (rx, ry), 0, 0, 360, (240, 240, 240), 2)
 
     det = SESSION.last_detection

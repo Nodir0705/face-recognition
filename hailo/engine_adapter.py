@@ -98,7 +98,7 @@ class HailoFaceEngine:
             yaw, pitch, roll = geometric_pose(kps5)
             out.append(DetectedFace(
                 bbox=(int(x1), int(y1), int(x2), int(y2)),
-                embedding=emb.astype(np.float32),
+                embedding=emb,  # embed_batch() already returns float32
                 det_score=float(d["score"]),
                 landmarks=kps5.astype(np.float32),
                 pose=(yaw, pitch, roll),
