@@ -68,6 +68,10 @@ class AttendanceDB:
         conn = sqlite3.connect(self.path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         # WAL gives us concurrent reads while the recognition daemon writes.
+        # Deliberately staying on synchronous=FULL (the default): writes are
+        # rare (tens/day), and sheets.sync_pending() commits mark_synced AFTER
+        # the Sheets append — a non-durable commit rolled back by a power cut
+        # would replay the append and duplicate rows in the spreadsheet.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         try:

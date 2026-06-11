@@ -88,6 +88,7 @@ const bannerName = document.getElementById('banner-name');
 const bannerMsg = document.getElementById('banner-msg');
 const hint = document.getElementById('hint');
 const clockEl = document.getElementById('clock');
+const feed = document.getElementById('feed');
 
 function fmtClock() {
   const d = new Date();
@@ -103,11 +104,26 @@ let lastShownAt = 0;
 let lastShownId = '';
 let hideTimer = null;
 let noFaceSince = Date.now();
+let streamFails = 0;   // consecutive failed /api/state polls
+let pollBusy = false;  // never stack polls — stale settles can't race recovery
 
 async function pollState() {
+  if (pollBusy) return;
+  pollBusy = true;
   try {
     const r = await fetch('/api/state');
+    if (!r.ok) throw new Error('http ' + r.status);
     const data = await r.json();
+
+    // Stream watchdog: after a real outage (>=3 consecutive failed polls,
+    // ~600ms+) the MJPEG <img> is frozen on its last frame — no error event
+    // fires on a dead MJPEG stream — so force one reconnect on recovery.
+    // A single dropped poll does NOT restart a healthy stream.
+    if (streamFails >= 3) {
+      feed.src = '/api/kiosk_stream?t=' + Date.now();
+    }
+    streamFails = 0;
+
     const faces = data.faces || [];
     const recognized = faces.filter(f => f.recognized);
 
@@ -132,8 +148,19 @@ async function pollState() {
       if (hideTimer) clearTimeout(hideTimer);
       hideTimer = setTimeout(() => banner.classList.remove('show'), GREETING_DURATION);
     }
-  } catch (e) { /* keep polling */ }
+  } catch (e) {
+    // Server unreachable — keep polling; reconnect the stream on recovery.
+    streamFails++;
+  } finally {
+    pollBusy = false;
+  }
 }
+
+// Backstop for load-time stream failures (e.g. first connect refused).
+// Mid-stream MJPEG death doesn't fire this; the poll watchdog covers that.
+feed.onerror = () => setTimeout(() => {
+  feed.src = '/api/kiosk_stream?t=' + Date.now();
+}, 2000);
 // 200ms polling — fast enough that the green tick / banner appear near-instantly
 // when Hailo recognizes someone, slow enough not to flood the Flask app.
 setInterval(pollState, 200);

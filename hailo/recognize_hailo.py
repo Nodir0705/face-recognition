@@ -24,7 +24,7 @@ import logging
 import signal
 import sys
 import time
-from collections import deque
+from collections import deque, namedtuple
 from pathlib import Path
 
 import cv2
@@ -40,6 +40,9 @@ from src.recognize import Tracker, decide_event_type, _today_start  # noqa: F401
 
 
 log = logging.getLogger("recognize_hailo")
+
+# Lightweight detection adapter for the shared Tracker (it only reads .bbox).
+TrackerDet = namedtuple("TrackerDet", "bbox")
 
 
 # ----- ArcFace 5-pt alignment template (same constants as cpp/pipeline.hpp) -----
@@ -180,10 +183,11 @@ class HailoSCRFD:
         kps_all = np.concatenate(all_kps)
         scores = np.concatenate(all_scores)
 
-        # NMS (cv2 wants xywh; we have x1y1x2y2)
+        # NMS (cv2 wants xywh; we have x1y1x2y2). NMSBoxes takes the float32
+        # arrays directly — no .tolist() materialization needed.
         wh = boxes[:, 2:] - boxes[:, :2]
-        keep = cv2.dnn.NMSBoxes(np.column_stack([boxes[:, :2], wh]).tolist(),
-                                  scores.tolist(),
+        keep = cv2.dnn.NMSBoxes(np.column_stack([boxes[:, :2], wh]),
+                                  scores,
                                   self.score_threshold, self.nms_threshold)
         if len(keep) == 0:
             return []
@@ -397,7 +401,7 @@ def main():
 
                     # ---- Tracking ----
                     # The shared Tracker takes objects with `.bbox = (x1,y1,x2,y2)`.
-                    fake_dets = [type("D", (), {"bbox": d["bbox"]})() for d in valid]
+                    fake_dets = [TrackerDet(d["bbox"]) for d in valid]
                     assignments = tracker.update(fake_dets)
 
                     # ---- Per-track recognition (one batched embed call) ----
