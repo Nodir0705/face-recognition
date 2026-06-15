@@ -1,44 +1,87 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- One data row of the enrolled-users table. Column metrics here MUST stay
+     byte-identical to the static header in activity_settings.xml (index 44dp /
+     name w4 / empId w3 / dept w4 / action 96dp, 16dp horizontal padding, 12dp
+     marginStart on columns 2-5) or the columns drift. -->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
-    android:paddingVertical="12dp"
-    android:paddingHorizontal="14dp"
-    android:background="?android:attr/selectableItemBackground">
+    android:orientation="vertical">
 
     <LinearLayout
-        android:layout_width="0dp"
+        android:id="@+id/userRow"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="16dp">
+        <!-- row background is set per-position by UsersAdapter (zebra) -->
+
+        <TextView
+            android:id="@+id/userIndex"
+            android:layout_width="44dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:fontFamily="monospace"
+            android:textColor="#9A968C"
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/userName"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="4"
+            android:layout_marginStart="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
             android:textColor="#222222"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/userMeta"
-            android:layout_width="wrap_content"
+            android:id="@+id/userEmpId"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
+            android:layout_weight="3"
+            android:layout_marginStart="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:fontFamily="monospace"
             android:textColor="#6A6A66"
-            android:textSize="13sp"
-            android:fontFamily="monospace" />
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/userDept"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="4"
+            android:layout_marginStart="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#6A6A66"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/deleteButton"
+            android:layout_width="96dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp"
+            android:textAllCaps="false"
+            android:text="@string/settings_delete_employee"
+            android:textColor="#DC2626"
+            android:textSize="12sp"
+            android:background="@drawable/row_delete_bg" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/deleteButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/settings_delete_employee"
-        android:textColor="#DC2626"
-        android:textSize="13sp"
-        android:background="@drawable/btn_secondary_bg" />
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="16dp"
+        android:background="#ECEAE3" />
 </LinearLayout>

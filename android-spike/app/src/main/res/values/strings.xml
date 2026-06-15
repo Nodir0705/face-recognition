@@ -54,6 +54,14 @@
     <string name="settings_add_employee">+ Yangi xodim</string>
     <string name="settings_delete_employee">O\'chirish</string>
     <string name="settings_no_employees">Hozircha xodimlar yo\'q. Yangi xodim qo\'shing.</string>
+
+    <!-- Enrolled-users table column headers -->
+    <string name="col_index">#</string>
+    <string name="col_name">Ism</string>
+    <string name="col_empid">ID</string>
+    <string name="col_department">Bo\'lim</string>
+    <string name="col_action">Amal</string>
+    <string name="table_em_dash">—</string>
     <string name="settings_section_sheets">Google Sheet</string>
     <string name="settings_sheets_hint">Apps Script webhook URL</string>
     <string name="settings_section_telegram">Telegram bot</string>
