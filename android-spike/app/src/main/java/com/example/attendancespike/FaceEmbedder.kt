@@ -2,10 +2,12 @@ package com.example.attendancespike
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -19,26 +21,43 @@ import kotlin.math.sqrt
  * Expected model: 112x112 RGB input, float32 in [-1, 1], output a 192-d embedding.
  * Drop the .tflite into app/src/main/assets/ as `mobile_face_net.tflite`.
  *
- * Backend selection (init time):
+ * Backend selection (init time), first that succeeds wins:
  *   1. GPU delegate if device supports OpenGL ES 3.1 (CompatibilityList)
- *   2. CPU with 2 threads otherwise
+ *   2. NNAPI delegate on API 27+ (no-op on the API-26 SM-T583 fleet)
+ *   3. CPU with XNNPACK + 4 threads
+ *   4. plain CPU with 2 threads
  * Backend used is logged at INFO level with tag "FaceEmbedder".
  */
 class FaceEmbedder(context: Context) {
 
     private val interpreter: Interpreter
     private var gpuDelegate: GpuDelegate? = null
+    private var nnApiDelegate: NnApiDelegate? = null
     private val inputBuf: ByteBuffer
     private val outputBuf: Array<FloatArray>
+    // Reused scratch for getPixels — same single-thread contract as inputBuf
+    // (one embed() at a time per instance), so it never races.
+    private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
     val backend: String
 
     init {
         val model = loadModel(context, MODEL_FILE)
         val opts = Interpreter.Options()
-        backend = tryConfigureGpu(opts) ?: configureCpu(opts)
+        backend = tryConfigureGpu(opts)
+            ?: tryConfigureNnApi(opts)
+            ?: configureCpu(opts)
         Log.i(TAG, "FaceEmbedder backend = $backend")
 
-        interpreter = Interpreter(model, opts)
+        // If interpreter construction fails after a delegate was created, free
+        // the delegate's native handle — close() is unreachable once the ctor
+        // throws (covers both the GPU and NNAPI delegates).
+        interpreter = try {
+            Interpreter(model, opts)
+        } catch (e: Throwable) {
+            gpuDelegate?.close(); gpuDelegate = null
+            nnApiDelegate?.close(); nnApiDelegate = null
+            throw e
+        }
 
         inputBuf = ByteBuffer
             .allocateDirect(4 * INPUT_SIZE * INPUT_SIZE * 3)
@@ -77,9 +96,33 @@ class FaceEmbedder(context: Context) {
         }
     }
 
+    /** NNAPI hardware accel — Android 8.1+ only. Returns null on older devices
+     *  or init failure so the caller falls through to the CPU path. */
+    private fun tryConfigureNnApi(opts: Interpreter.Options): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return null
+        return try {
+            val delegate = NnApiDelegate()
+            opts.addDelegate(delegate)
+            nnApiDelegate = delegate
+            "NNAPI"
+        } catch (e: Throwable) {
+            Log.w(TAG, "NNAPI delegate init failed, falling back to CPU", e)
+            null
+        }
+    }
+
     private fun configureCpu(opts: Interpreter.Options): String {
-        opts.setNumThreads(2)
-        return "CPU (2 threads)"
+        // XNNPACK gives a sizeable SIMD speedup for this float32 model on the
+        // 32-bit Exynos cores; 4 threads on the octa-core A53.
+        opts.setNumThreads(4)
+        return try {
+            opts.setUseXNNPACK(true)
+            "CPU (4 threads, XNNPACK)"
+        } catch (e: Throwable) {
+            Log.w(TAG, "XNNPACK unavailable, plain CPU", e)
+            opts.setNumThreads(2)
+            "CPU (2 threads)"
+        }
     }
 
     fun embed(face: Bitmap): FloatArray {
@@ -87,15 +130,11 @@ class FaceEmbedder(context: Context) {
         else Bitmap.createScaledBitmap(face, INPUT_SIZE, INPUT_SIZE, true)
 
         inputBuf.rewind()
-        val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
         resized.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
         for (px in pixels) {
-            val r = ((px shr 16) and 0xFF) / 127.5f - 1f
-            val g = ((px shr 8) and 0xFF) / 127.5f - 1f
-            val b = (px and 0xFF) / 127.5f - 1f
-            inputBuf.putFloat(r)
-            inputBuf.putFloat(g)
-            inputBuf.putFloat(b)
+            inputBuf.putFloat(((px shr 16) and 0xFF) * INV_SCALE - 1f)
+            inputBuf.putFloat(((px shr 8) and 0xFF) * INV_SCALE - 1f)
+            inputBuf.putFloat((px and 0xFF) * INV_SCALE - 1f)
         }
         if (resized !== face) resized.recycle()
 
@@ -107,6 +146,8 @@ class FaceEmbedder(context: Context) {
         interpreter.close()
         gpuDelegate?.close()
         gpuDelegate = null
+        nnApiDelegate?.close()
+        nnApiDelegate = null
     }
 
     private fun l2Normalize(v: FloatArray): FloatArray {
@@ -188,5 +229,8 @@ class FaceEmbedder(context: Context) {
         }
         private const val INPUT_SIZE = 112
         private const val EMBEDDING_DIM = 192
+        // Reciprocal of 127.5 so per-pixel normalization is a multiply, not a
+        // divide (3× per pixel × 12544 pixels per embed).
+        private const val INV_SCALE = 1f / 127.5f
     }
 }

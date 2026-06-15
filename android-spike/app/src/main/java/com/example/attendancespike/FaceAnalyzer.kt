@@ -96,6 +96,10 @@ class FaceAnalyzer(
         try {
             handleResult(bitmap, result, detectMs)
         } finally {
+            // handleResult recycles the bitmap on its normal return paths (as
+            // early as possible); this is the backstop so an exception in there
+            // can't leak the ~full-frame bitmap. isRecycled guards double-free.
+            if (!bitmap.isRecycled) bitmap.recycle()
             imageProxy.close()
             recordPerf(detectMs, lastEmbedMs)
         }

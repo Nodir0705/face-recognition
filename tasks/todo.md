@@ -76,3 +76,33 @@ Adversarial 3-lens panel on the diff: 0 blockers, 4 minors — all addressed:
 Verification: pytest 49 passed / 1 skipped; overlay blend benchmarked
 7.78 → 1.35 ms/frame (max pixel diff 1); NMSBoxes numpy path tested incl.
 empty result; kiosk JS passes node --check.
+
+# Task: Android optimizations + on-device install (2026-06-15)
+
+Target device: Samsung SM-T583, Android 8.0 (API 26), 32-bit armeabi-v7a
+Exynos 7870 / Mali-T830, TFLite 2.8.0.
+
+- [x] FaceEmbedder delegate chain: GPU → NNAPI (gated SDK>=27) → CPU+XNNPACK(4thr)
+  → plain CPU(2thr). NNAPI is dead on API 26 but correct for newer tablets;
+  XNNPACK is the real fallback win. Device actually selects GPU, so these are
+  fallbacks here — but apply on any tablet where GPU init fails.
+- [x] FaceEmbedder.embed(): reuse instance `pixels` IntArray (was ~50KB alloc
+  per embed); precompute INV_SCALE = 1/127.5f (multiply not divide, 3×/pixel).
+  These are active on this device regardless of backend (host-side preprocess).
+- [x] FaceEmbedder init: close delegates if Interpreter() ctor throws (hardens
+  GPU+NNAPI both; from review).
+- [x] FaceAnalyzer.analyze(): bitmap recycle backstop in finally (isRecycled-
+  guarded) so an exception in handleResult can't leak the frame bitmap.
+- [x] SKIPPED (risk>reward on a working kiosk): ImageUtils toRgbaBitmap double-
+  alloc (padded→trim copy is required by copyPixelsFromBuffer), Matrix-per-
+  rotation (micro), EmbeddingStore O(n·m) (negligible at tens of employees),
+  in-place L2-normalize (UNSAFE — returned array is stored by enrollMulti).
+- [x] Build: gradlew assembleDebug BUILD SUCCESSFUL
+- [x] Review: kotlin-reviewer (0 blockers) + threading verifier (concurrent
+  embed() impossible — EnrollActivity unbindAll() stops kiosk analyzer).
+- [x] Install: adb install -r on 5200427e95c446b5 → Success
+- [x] On-device smoke: launches clean, no crash, FaceEmbedder+FaceDetector
+  backend=GPU, warm-ups OK, steady-state ~21-23 fps / detect ~34ms, no errors.
+- [ ] NOT YET: live embed() against a real face (needs a person in front of the
+  tablet) — the IntArray/INV_SCALE pixel loop is reviewed but not yet exercised
+  on-device. embedAvg=0 in PERF until a face appears.
