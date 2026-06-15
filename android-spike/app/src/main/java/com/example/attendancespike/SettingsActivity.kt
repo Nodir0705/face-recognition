@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var employeesHeading: TextView
+    private lateinit var usersTableCard: View
     private lateinit var usersRecycler: RecyclerView
     private lateinit var usersEmpty: TextView
 
@@ -29,6 +30,7 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_settings)
 
         employeesHeading = findViewById(R.id.employeesHeading)
+        usersTableCard = findViewById(R.id.usersTableCard)
         usersRecycler = findViewById(R.id.usersRecycler)
         usersEmpty = findViewById(R.id.usersEmpty)
 
@@ -55,7 +57,9 @@ class SettingsActivity : AppCompatActivity() {
         val users = app.enrollmentDb.listPersons()
         adapter.submit(users)
         employeesHeading.text = getString(R.string.settings_employees_fmt, users.size)
-        usersRecycler.visibility = if (users.isEmpty()) View.GONE else View.VISIBLE
+        // Hide the whole table card (header band + accent + rows) on empty so
+        // the header doesn't linger above the "no employees" message.
+        usersTableCard.visibility = if (users.isEmpty()) View.GONE else View.VISIBLE
         usersEmpty.visibility = if (users.isEmpty()) View.VISIBLE else View.GONE
     }
 

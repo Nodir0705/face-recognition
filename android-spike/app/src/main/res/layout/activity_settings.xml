@@ -72,13 +72,102 @@
                 android:background="@drawable/btn_primary_bg" />
         </LinearLayout>
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/usersRecycler"
+        <!-- Enrolled-users table: elevated card holding a static column header
+             (its column metrics MUST match item_user.xml), a thin on-brand
+             accent rule, then the data rows. clipToOutline + uniform-radius
+             card bg clips the header's top + last row's bottom corners. -->
+        <LinearLayout
+            android:id="@+id/usersTableCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/edit_text_bg"
-            android:padding="4dp" />
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:background="@drawable/table_card_bg"
+            android:elevation="4dp"
+            android:clipToOutline="true">
+
+            <!-- Static header row — columns aligned with item_user.xml -->
+            <LinearLayout
+                android:id="@+id/usersHeaderRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/table_header_bg"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp">
+
+                <TextView
+                    android:layout_width="44dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="@string/col_index"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.06"
+                    android:textColor="#8A867C"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="4"
+                    android:layout_marginStart="12dp"
+                    android:text="@string/col_name"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.06"
+                    android:textColor="#8A867C"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="3"
+                    android:layout_marginStart="12dp"
+                    android:text="@string/col_empid"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.06"
+                    android:textColor="#8A867C"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="4"
+                    android:layout_marginStart="12dp"
+                    android:text="@string/col_department"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.06"
+                    android:textColor="#8A867C"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="96dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:gravity="center"
+                    android:text="@string/col_action"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.06"
+                    android:textColor="#8A867C"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Thin on-brand accent rule under the header band -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:background="@drawable/table_header_accent" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/usersRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/usersEmpty"
