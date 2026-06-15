@@ -363,4 +363,33 @@
                 android:textSize="18sp"
                 android:text="@string/camera_starting" />
         </LinearLayout>
+
+        <!-- Loading veil shown after the sweep completes while the embeddings
+             are written to SQLite off the main thread. Topmost child + clickable
+             so it covers the capture screen and blocks its Cancel button during
+             the save, then fades to reveal the Done screen. -->
+        <LinearLayout
+            android:id="@+id/saveLoading"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="#0B1020"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:indeterminate="true" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:text="@string/enroll_saving" />
+        </LinearLayout>
     </FrameLayout>

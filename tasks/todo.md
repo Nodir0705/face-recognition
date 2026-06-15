@@ -106,3 +106,27 @@ Exynos 7870 / Mali-T830, TFLite 2.8.0.
 - [ ] NOT YET: live embed() against a real face (needs a person in front of the
   tablet) — the IntArray/INV_SCALE pixel loop is reviewed but not yet exercised
   on-device. embedAvg=0 in PERF until a face appears.
+
+# Task: Enrollment "saving" loading veil (Android) — 2026-06-15
+
+User: "after registration, lets put some kind of icon for loading" → Android app.
+
+- [x] Added `saveLoading` full-screen veil (ProgressBar + "Saqlanmoqda…",
+  Uzbek) to activity_enroll.xml as topmost clickable child of the root frame.
+- [x] finishEnrollment() now snapshots data, shows veil, runs enrollMulti()
+  (SQLite write) on a new saveExecutor OFF the main thread (was on main —
+  the transaction fsyncs to eMMC), then posts back via runOnUiThread
+  (isFinishing/isDestroyed-guarded) to set summary, switchTo(DONE), fade veil.
+- [x] Review (kotlin-reviewer) found 2 real issues, both fixed:
+  - hardware BACK wasn't blocked during save → OnBackPressedCallback enabled
+    only while the veil is up (swallows BACK).
+  - awaitTermination(2s) on main thread in onDestroy → removed; save holds
+    only app-scoped store/db so it safely outlives the activity (shutdown()
+    only). Avoids stacking main-thread block with the existing 1s analysis await.
+- [x] Build + install on 5200427e95c446b5: BUILD SUCCESSFUL, install Success.
+- [x] On-device: EnrollActivity inflates the new layout + back-callback wiring,
+  onCreate completes, form renders, kiosk healthy (GPU ~19fps), no crashes.
+- [ ] NOT verified live: the veil actually appearing during finishEnrollment —
+  only fires after a real 4-pose face sweep (needs a person at the tablet).
+  Verified by build + clean inflation + review + parity with the proven
+  captureLoading veil.

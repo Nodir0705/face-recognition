@@ -13,6 +13,7 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
@@ -59,6 +60,7 @@ class EnrollActivity : AppCompatActivity() {
     private lateinit var poseProgress: ProgressBar
     private lateinit var readoutText: TextView
     private lateinit var captureLoading: View
+    private lateinit var saveLoading: View
 
     // --- Done
     private lateinit var doneSummary: TextView
@@ -83,6 +85,12 @@ class EnrollActivity : AppCompatActivity() {
     private var pendingDept = ""
 
     private lateinit var analysisExecutor: ExecutorService
+    // One-shot worker for the final SQLite write so the save never blocks the
+    // main thread (the transaction fsyncs to eMMC).
+    private lateinit var saveExecutor: ExecutorService
+    // Swallows the hardware BACK button while the saving veil is up so the user
+    // can't finish the activity mid-write and skip the Done screen.
+    private var saveBackBlocker: OnBackPressedCallback? = null
     private var enrollAnalyzer: EnrollFaceAnalyzer? = null
     private val analyzersToClose = mutableListOf<EnrollFaceAnalyzer>()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -118,6 +126,7 @@ class EnrollActivity : AppCompatActivity() {
         poseProgress = findViewById(R.id.poseProgress)
         readoutText = findViewById(R.id.readoutText)
         captureLoading = findViewById(R.id.captureLoading)
+        saveLoading = findViewById(R.id.saveLoading)
 
         doneSummary = findViewById(R.id.doneSummary)
 
@@ -128,6 +137,11 @@ class EnrollActivity : AppCompatActivity() {
         findViewById<Button>(R.id.backToKioskButton).setOnClickListener { finish() }
 
         analysisExecutor = Executors.newSingleThreadExecutor()
+        saveExecutor = Executors.newSingleThreadExecutor()
+
+        saveBackBlocker = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() { /* swallow BACK during save */ }
+        }.also { onBackPressedDispatcher.addCallback(this, it) }
     }
 
     // -----------------------------------------------------------------
@@ -391,27 +405,61 @@ class EnrollActivity : AppCompatActivity() {
     }
 
     private fun finishEnrollment() {
-        // Save to the shared store (which persists to SQLite + caches in memory).
+        // Runs on the main thread (analyzer posts frames via runOnUiThread).
+        // Snapshot everything the save needs, then persist OFF the main thread
+        // so the SQLite transaction's fsync never janks the UI. A loading veil
+        // covers the screen until the write completes, then the Done screen
+        // fades in.
         val app = application as AttendanceApp
-        app.store.enrollMulti(
-            empId = pendingEmpId,
-            name = pendingName,
-            embeddings = capturedEmbeddings.toList(),
-            department = pendingDept.takeIf { it.isNotBlank() }
-        )
-        Log.i(TAG, "Enrolled '$pendingEmpId' ($pendingName) with " +
-                "${capturedEmbeddings.size} embeddings. Store size: ${app.store.size()}")
+        val empId = pendingEmpId
+        val name = pendingName
+        val count = capturedEmbeddings.size
+        val embeddings = capturedEmbeddings.toList()
+        val dept = pendingDept.takeIf { it.isNotBlank() }
         val deptStr = if (pendingDept.isEmpty()) "—" else pendingDept
-        doneSummary.text = getString(
-            R.string.enroll_done_summary_fmt,
-            pendingName,
-            capturedEmbeddings.size,
-            pendingEmpId
-        ) + "\n" + deptStr
 
-        // Release the camera before showing the done screen.
+        // Release the camera and raise the saving veil right away.
         unbindCamera()
-        switchTo(WizardStep.DONE)
+        showSaveLoading()
+
+        saveExecutor.execute {
+            app.store.enrollMulti(
+                empId = empId,
+                name = name,
+                embeddings = embeddings,
+                department = dept
+            )
+            Log.i(TAG, "Enrolled '$empId' ($name) with $count embeddings. " +
+                    "Store size: ${app.store.size()}")
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                doneSummary.text = getString(
+                    R.string.enroll_done_summary_fmt, name, count, empId
+                ) + "\n" + deptStr
+                switchTo(WizardStep.DONE)
+                hideSaveLoading()
+            }
+        }
+    }
+
+    private fun showSaveLoading() {
+        saveBackBlocker?.isEnabled = true
+        saveLoading.alpha = 1f
+        saveLoading.visibility = View.VISIBLE
+    }
+
+    private fun hideSaveLoading() {
+        // Done screen is up now — let BACK return to Settings again.
+        saveBackBlocker?.isEnabled = false
+        if (saveLoading.visibility != View.VISIBLE) return
+        saveLoading.animate()
+            .alpha(0f)
+            .setDuration(250)
+            .withEndAction {
+                saveLoading.visibility = View.GONE
+                saveLoading.alpha = 1f  // reset for the next enrollment
+            }
+            .start()
     }
 
     private fun cancelCapture() {
@@ -513,6 +561,13 @@ class EnrollActivity : AppCompatActivity() {
                     1, java.util.concurrent.TimeUnit.SECONDS
                 )
             } catch (_: InterruptedException) {}
+        }
+        // Don't await on the main thread — the save holds only app-scoped
+        // store/db, so it's safe to finish after the activity is gone. The
+        // runOnUiThread callback no-ops via the isFinishing/isDestroyed guard.
+        // shutdown() lets the in-flight write complete, then ends the worker.
+        if (::saveExecutor.isInitialized) {
+            saveExecutor.shutdown()
         }
         for (a in analyzersToClose) {
             try { a.close() } catch (_: Exception) {}

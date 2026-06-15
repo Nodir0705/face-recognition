@@ -27,6 +27,7 @@
     <!-- Enrollment — Step 2: Capture -->
     <string name="enroll_step2_heading">2-bosqich · Yuzni olish</string>
     <string name="camera_starting">Kamera tayyorlanmoqda…</string>
+    <string name="enroll_saving">Saqlanmoqda…</string>
     <string name="instr_fit_face">Yuzingizni doiraga joylashtiring</string>
     <string name="instr_look_left">Boshingizni chapga buring</string>
     <string name="instr_look_right">Boshingizni o\'ngga buring</string>
