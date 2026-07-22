@@ -66,5 +66,3 @@ echo
 echo "  6. For the 7\" touchscreen kiosk (Chromium fullscreen):"
 echo "       bash scripts/install-kiosk-autostart.sh"
 echo "       sudo reboot"
-echo
-echo "  7. For remote admin access, see docs/remote_access.md"

@@ -122,10 +122,7 @@ attendance_system/
 │   ├── attendance.service       # main web app
 │   └── attendance-sync.service  # sheets sync worker
 ├── docs/
-│   ├── enrollment.md
-│   ├── google_sheets_setup.md
-│   ├── remote_access.md         # for admin laptop ↔ Pi
-│   └── privacy_pipa.md
+│   └── images/            # README screenshots
 ├── cpp/                   # Parallel C++ implementation (see cpp/README.md)
 │   ├── CMakeLists.txt
 │   ├── pipeline.hpp       # SCRFD anchor decode, NMS, ArcFace alignment, match
@@ -147,7 +144,7 @@ attendance_system/
 1. Flash Raspberry Pi OS Bookworm 64-bit; connect Camera Module 3; enable camera in `raspi-config`.
 2. Clone this project to `/home/pi/attendance_system`.
 3. Run `bash scripts/install.sh` (~5 minutes; downloads ~50MB of model files). Or `make install`.
-4. Set up Google Sheets (see `docs/google_sheets_setup.md`).
+4. Set up Google Sheets: create a Google Cloud service account with the Sheets API enabled, share your spreadsheet with the service-account email, and save its JSON key as `config/credentials.json`.
 5. Test the web app:
    ```bash
    make run        # equivalent to: PYTHONPATH=. .venv/bin/python src/web/app.py
@@ -186,7 +183,7 @@ The system detects masks and sunglasses heuristically (eye-region brightness & v
 - **Enrollment** refuses to capture a pose while the face is occluded and shows the reason on screen ("Please remove face mask").
 - **Recognition** does not match an occluded face against the gallery at all — it would be unreliable and could falsely match the wrong employee. The kiosk shows an amber box with the prompt instead of a green tick.
 
-Tunables are in `src/occlusion.py`. See `docs/enrollment.md` for the runtime details.
+Tunables are in `src/occlusion.py`.
 
 ## License
 

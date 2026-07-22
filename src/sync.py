@@ -109,7 +109,7 @@ def main():
     gs = cfg["google_sheets"]
     creds_path = project_root / gs["credentials_path"]
     if not creds_path.exists():
-        log.error(f"credentials missing at {creds_path} — see docs/google_sheets_setup.md")
+        log.error(f"credentials missing at {creds_path} — put your Google service-account JSON key there")
         sys.exit(2)
 
     service = build_service(creds_path)

@@ -147,8 +147,8 @@ class SheetsSync:
             return self._service
         if not self.credentials_present():
             raise RuntimeError(
-                f"credentials missing at {self.credentials_path} — see "
-                f"docs/google_sheets_setup.md")
+                f"credentials missing at {self.credentials_path} — put your "
+                f"Google service-account JSON key there")
         # Lazy imports — keep heavy Google libs out of the critical path
         # for installs that don't need Sheets.
         from google.oauth2.service_account import Credentials
