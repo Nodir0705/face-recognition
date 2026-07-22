@@ -34,6 +34,11 @@ class CameraSource:
         self._closer = None
 
     def _open(self):
+        # Try picamera2 first (CSI Pi camera is its happy path), fall back to
+        # cv2.VideoCapture for USB UVC cams. Many USB cams don't support the
+        # 1280x720 RGB888 mode picamera2 asks for here, so we ALSO fall back
+        # if picamera2 itself raises during configure/start, not just on
+        # ImportError.
         try:
             from picamera2 import Picamera2
             picam = Picamera2()
@@ -55,11 +60,22 @@ class CameraSource:
             log.info(f"camera: picamera2 {self.width}x{self.height}@{self.framerate}")
             return read, close
         except ImportError:
-            cap = cv2.VideoCapture(0)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            log.info(f"camera: /dev/video0 fallback {self.width}x{self.height}")
-            return cap.read, cap.release
+            log.info("camera: picamera2 not installed, using V4L2 fallback")
+        except Exception as e:
+            log.warning(f"camera: picamera2 failed ({type(e).__name__}: {e}); "
+                        f"falling back to V4L2")
+
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            raise RuntimeError("could not open camera at /dev/video0 either")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        cap.set(cv2.CAP_PROP_FPS, self.framerate)
+        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        log.info(f"camera: V4L2 /dev/video0  requested {self.width}x{self.height}, "
+                 f"got {actual_w}x{actual_h}")
+        return cap.read, cap.release
 
     def start(self):
         self._reader, self._closer = self._open()
@@ -67,6 +83,13 @@ class CameraSource:
         self._thread.start()
 
     def _loop(self):
+        # Sleep just long enough between reads to yield the GIL and not
+        # spin a core. cv2.VideoCapture on V4L2 sometimes buffers frames
+        # internally and read() returns immediately, so without ANY sleep
+        # this loop eats ~75% of a core. With sleep ~half the camera period,
+        # we still consume frames as fast as the camera produces them but
+        # leave the GIL available for the MJPEG + recognition threads.
+        interval = 0.5 / max(self.framerate, 1)
         while not self._stop.is_set():
             ok, frame = self._reader()
             if not ok:
@@ -74,8 +97,7 @@ class CameraSource:
                 continue
             with self._lock:
                 self._frame = frame
-            # Don't burn CPU faster than the camera produces frames
-            time.sleep(1.0 / max(self.framerate, 1))
+            time.sleep(interval)
 
     def latest_frame(self) -> np.ndarray | None:
         with self._lock:
@@ -88,27 +110,50 @@ class CameraSource:
         if self._closer:
             self._closer()
 
-    def mjpeg_generator(self, draw_overlay=None, fps: int = 12):
+    def mjpeg_generator(self, draw_overlay=None, fps: int = 25,
+                         jpeg_quality: int = 60,
+                         preview_size: tuple[int, int] | None = None):
         """Yield multipart MJPEG bytes for HTTP streaming.
 
         draw_overlay(frame) -> frame  — optional hook to annotate the frame
         (e.g. with face boxes, green tick, oval guide) before streaming.
+
+        preview_size — (width, height) to downscale to AFTER overlay drawing
+        and BEFORE JPEG encoding. Roughly halves encode cost vs full 1280×720
+        when set to (960, 540). Recognition is unaffected because it always
+        runs on the full-resolution `latest_frame()`.
         """
         boundary = b"--frame"
         interval = 1.0 / fps
+        next_yield = time.perf_counter()
         while not self._stop.is_set():
             frame = self.latest_frame()
             if frame is None:
-                time.sleep(0.05)
+                time.sleep(0.02)
                 continue
             if draw_overlay is not None:
                 try:
                     frame = draw_overlay(frame)
                 except Exception:
                     log.exception("overlay error")
-            ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if preview_size is not None and \
+                (frame.shape[1], frame.shape[0]) != preview_size:
+                frame = cv2.resize(frame, preview_size,
+                                    interpolation=cv2.INTER_LINEAR)
+            ok, jpg = cv2.imencode(".jpg", frame,
+                                    [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ok:
                 continue
             yield (boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n"
                    + jpg.tobytes() + b"\r\n")
-            time.sleep(interval)
+            # Rate-limit: sleep only the REMAINING time until the next slot,
+            # accounting for the work we just did. The previous "always sleep
+            # the full interval" pattern was capping us well below `fps`
+            # whenever per-frame work was non-trivial (encode, overlay).
+            next_yield += interval
+            now = time.perf_counter()
+            if now < next_yield:
+                time.sleep(next_yield - now)
+            else:
+                # We're behind — reset the slot to NOW so we don't burst-catch-up
+                next_yield = now

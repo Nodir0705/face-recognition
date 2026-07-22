@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Davomat</string>
+
+    <!-- Kiosk -->
+    <string name="hint_look_at_camera">Kameraga qarang</string>
+    <string name="event_in">Kelish belgilandi</string>
+    <string name="event_out">Ketish belgilandi</string>
+
+    <!-- Enrollment — Step 1: Details -->
+    <string name="enroll_title">Yangi xodimni ro\'yxatga olish</string>
+    <string name="enroll_step1_heading">1-bosqich · Xodim ma\'lumotlari</string>
+    <string name="enroll_step1_subtitle">ID raqami va to\'liq ismni kiriting.</string>
+    <string name="enroll_field_emp_id">ID raqami</string>
+    <string name="enroll_field_emp_id_hint">E001</string>
+    <string name="enroll_field_name">To\'liq ism</string>
+    <string name="enroll_field_name_hint">Ali Valiyev</string>
+    <string name="enroll_field_dept">Bo\'lim (ixtiyoriy)</string>
+    <string name="enroll_field_dept_hint">Muhandislik</string>
+    <string name="enroll_field_email">Email (ixtiyoriy)</string>
+    <string name="enroll_field_email_hint">ali@kompaniya.uz</string>
+    <string name="continue_btn">Davom etish</string>
+    <string name="cancel_btn">Bekor qilish</string>
+    <string name="back">Orqaga</string>
+    <string name="validation_required">ID va ism majburiy.</string>
+
+    <!-- Enrollment — Step 2: Capture -->
+    <string name="enroll_step2_heading">2-bosqich · Yuzni olish</string>
+    <string name="camera_starting">Kamera tayyorlanmoqda…</string>
+    <string name="enroll_saving">Saqlanmoqda…</string>
+    <string name="instr_fit_face">Yuzingizni doiraga joylashtiring</string>
+    <string name="instr_look_left">Boshingizni chapga buring</string>
+    <string name="instr_look_right">Boshingizni o\'ngga buring</string>
+    <string name="instr_look_up">Boshingizni yuqoriga ko\'taring</string>
+    <string name="instr_look_down">Boshingizni pastga eging</string>
+    <string name="pip_left">Chap</string>
+    <string name="pip_right">O\'ng</string>
+    <string name="pip_up">Yuqori</string>
+    <string name="pip_down">Past</string>
+    <string name="arrow_left">←</string>
+    <string name="arrow_right">→</string>
+    <string name="arrow_up">↑</string>
+    <string name="arrow_down">↓</string>
+
+    <!-- Enrollment — Step 3: Done -->
+    <string name="enroll_done_heading">Ro\'yxatga olindi</string>
+    <string name="enroll_done_summary_fmt">%1$s uchun %2$d ta yuz olindi (%3$s)</string>
+    <string name="enroll_another">Yana ro\'yxatga olish</string>
+    <string name="enroll_back_to_kiosk">Asosiy sahifaga qaytish</string>
+
+    <!-- Settings -->
+    <string name="settings">Sozlamalar</string>
+    <string name="settings_employees_fmt">Xodimlar (%1$d)</string>
+    <string name="settings_add_employee">+ Yangi xodim</string>
+    <string name="settings_delete_employee">O\'chirish</string>
+    <string name="settings_no_employees">Hozircha xodimlar yo\'q. Yangi xodim qo\'shing.</string>
+
+    <!-- Enrolled-users table column headers -->
+    <string name="col_index">#</string>
+    <string name="col_name">Ism</string>
+    <string name="col_empid">ID</string>
+    <string name="col_department">Bo\'lim</string>
+    <string name="col_action">Amal</string>
+    <string name="table_em_dash">—</string>
+    <string name="settings_section_sheets">Google Sheet</string>
+    <string name="settings_sheets_hint">Apps Script webhook URL</string>
+    <string name="settings_section_telegram">Telegram bot</string>
+    <string name="settings_telegram_token_hint">Bot tokeni</string>
+    <string name="settings_telegram_chat_hint">Admin chat ID</string>
+    <string name="settings_save">Saqlash</string>
+    <string name="settings_saved">Saqlandi</string>
+    <string name="settings_config_button">Konfiguratsiya</string>
+    <string name="config_title">Konfiguratsiya</string>
+    <string name="config_subtitle">Sheet va Telegram bog\'lanishi (bir martalik sozlash)</string>
+    <string name="event_log_in_fmt">%1$s · Kirdi · %2$s</string>
+    <string name="event_log_out_fmt">%1$s · Chiqdi · %2$s</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hint pill — translucent dark, fully rounded so it floats over the preview. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#CC000000" />
+    <corners android:radius="22dp" />
+</shape>

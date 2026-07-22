@@ -89,6 +89,21 @@ def test_event_type_check_constraint(tmp_db):
         tmp_db.log_event("E001", "BOGUS", 1.0)
 
 
+def test_settings_set_get_default(tmp_db):
+    assert tmp_db.get_setting("nope") is None
+    assert tmp_db.get_setting("nope", default="fallback") == "fallback"
+
+    tmp_db.set_setting("sheet_id", "abc123")
+    assert tmp_db.get_setting("sheet_id") == "abc123"
+
+    # update overwrites
+    tmp_db.set_setting("sheet_id", "xyz789")
+    assert tmp_db.get_setting("sheet_id") == "xyz789"
+
+    tmp_db.set_setting("worksheet", "Attendance")
+    assert tmp_db.all_settings() == {"sheet_id": "xyz789", "worksheet": "Attendance"}
+
+
 def test_record_sync_failure_increments(tmp_db):
     tmp_db.upsert_employee("E001", "Alice", _emb(1))
     rid = tmp_db.log_event("E001", "IN", 0.9)

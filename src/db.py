@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS sync_failures (
     last_error      TEXT,
     last_attempt    INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
 """
 
 
@@ -62,6 +68,10 @@ class AttendanceDB:
         conn = sqlite3.connect(self.path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         # WAL gives us concurrent reads while the recognition daemon writes.
+        # Deliberately staying on synchronous=FULL (the default): writes are
+        # rare (tens/day), and sheets.sync_pending() commits mark_synced AFTER
+        # the Sheets append — a non-durable commit rolled back by a power cut
+        # would replay the append and duplicate rows in the spreadsheet.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         try:
@@ -114,20 +124,19 @@ class AttendanceDB:
         stacked_embeddings is shape (total_N, 512), and emp_ids/names are
         parallel lists of length total_N indicating who each row belongs to.
         """
-        emp_ids, names, embs = [], [], []
         with self._conn() as c:
             rows = c.execute(
                 "SELECT emp_id, name, embedding FROM employees WHERE active = 1"
             ).fetchall()
-        for r in rows:
-            arr = np.frombuffer(r["embedding"], dtype=np.float32).reshape(-1, 512)
-            for vec in arr:
-                emp_ids.append(r["emp_id"])
-                names.append(r["name"])
-                embs.append(vec)
-        if not embs:
+        if not rows:
             return [], [], np.zeros((0, 512), dtype=np.float32)
-        return emp_ids, names, np.stack(embs)
+        arrs = [np.frombuffer(r["embedding"], dtype=np.float32).reshape(-1, 512)
+                for r in rows]
+        emp_ids, names = [], []
+        for r, arr in zip(rows, arrs):
+            emp_ids.extend([r["emp_id"]] * arr.shape[0])
+            names.extend([r["name"]] * arr.shape[0])
+        return emp_ids, names, np.vstack(arrs)
 
     # ---------- Attendance ----------
 
@@ -165,6 +174,13 @@ class AttendanceDB:
                    LIMIT ?""",
                 (limit,),
             ).fetchall()
+
+    def count_pending_sync(self) -> int:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM attendance WHERE synced = 0"
+            ).fetchone()
+        return int(row["n"])
 
     def mark_synced(self, attendance_ids: list[int]) -> None:
         if not attendance_ids:
@@ -263,6 +279,29 @@ class AttendanceDB:
                 "events": events,
             })
         return out
+
+    # ---------- Settings (key/value runtime config) ----------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value = excluded.value, updated_at = excluded.updated_at""",
+                (key, value, int(time.time())),
+            )
+
+    def all_settings(self) -> dict[str, str]:
+        with self._conn() as c:
+            return {r["key"]: r["value"]
+                    for r in c.execute("SELECT key, value FROM settings").fetchall()}
 
     def events_per_day(self, start_ts: int, end_ts: int):
         """Counts of IN and OUT events per local date in the range.

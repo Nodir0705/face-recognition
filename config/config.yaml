@@ -1,10 +1,13 @@
 # Attendance system configuration
 
 camera:
-  # Pi Camera Module 3 via picamera2
+  # Pi Camera Module 3 via picamera2 (or USB cam via V4L2 fallback)
   width: 1280
   height: 720
-  framerate: 15
+  # Camera capture rate. The Hailo backend can keep up with 30 fps; the
+  # Python+CPU backend will fall behind around 5 fps and that's fine —
+  # the recognition thread always processes the latest frame, never queues.
+  framerate: 30
   # Region of interest (fraction of frame). Use this to ignore corners.
   roi: [0.1, 0.1, 0.9, 0.9]
 

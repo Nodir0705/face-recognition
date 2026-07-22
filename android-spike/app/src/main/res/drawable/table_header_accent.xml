@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thin on-brand (blue) rule under the header band — crisps the header/body
+     separation without full grid lines. Matches the primary button accent. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2563EB" />
+</shape>
