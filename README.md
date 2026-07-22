@@ -8,6 +8,10 @@
 
 A Raspberry Pi attendance kiosk with iPhone-Face-ID-style guided enrollment, live recognition with on-screen feedback, and Google Sheets logging.
 
+<p align="center">
+  <img src="docs/images/kiosk-demo.jpg" alt="Kiosk view — live recognition with green face box and confirmation banner" width="720">
+</p>
+
 **Built with:** SCRFD/RetinaFace detection · ArcFace 512-d embeddings (InsightFace) · OpenCV · Flask + MJPEG · SQLite (WAL) · Google Sheets API · Hailo-8 NPU
 
 > **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU. `make bench-all` prints all three SUMMARY lines for direct comparison.
