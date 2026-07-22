@@ -139,8 +139,7 @@ attendance_system/
 ├── samples/               # bench input images (gitignored)
 ├── requirements.txt
 ├── pytest.ini
-├── Makefile               # make install / run / test / cpp-build / bench-{cpp,py,hailo,all}
-└── tasks/                 # build plans + lessons (developer notes)
+└── Makefile               # make install / run / test / cpp-build / bench-{cpp,py,hailo,all}
 ```
 
 ## Quick start

@@ -39,3 +39,10 @@ cpp/build/
 samples/*.jpg
 samples/*.png
 !samples/README.md
+
+# Dev-internal notes (never commit)
+tasks/
+handoff.md
+
+# Android machine-local config
+local.properties
