@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fast-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # insightface is imported lazily and only exercised by @slow tests,
+      # so CI skips it — its sdist build is the one flaky/heavy install.
+      - name: Install dependencies
+        run: |
+          grep -vE '^insightface' requirements.txt > ci-requirements.txt
+          pip install -r ci-requirements.txt
+      - name: Run fast suite
+        run: python -m pytest -ra

@@ -1,8 +1,25 @@
 # Face Recognition Attendance System
 
+[![tests](https://github.com/Nodir0705/face-recognition/actions/workflows/tests.yml/badge.svg)](https://github.com/Nodir0705/face-recognition/actions/workflows/tests.yml)
+![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.0-000000?logo=flask)
+![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%7C%205-C51A4A?logo=raspberrypi)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
 A Raspberry Pi attendance kiosk with iPhone-Face-ID-style guided enrollment, live recognition with on-screen feedback, and Google Sheets logging.
 
-> **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU and is **measured at 8.6× faster than Python on the same Pi 5 CPU, with 95× tighter jitter** (5.59 ms vs 48.08 ms per face, ±0.29 ms vs ±27 ms). See [`cpp/README.md`](cpp/README.md) and [`hailo/README.md`](hailo/README.md). `make bench-all` prints all three SUMMARY lines for direct comparison.
+**Built with:** SCRFD/RetinaFace detection · ArcFace 512-d embeddings (InsightFace) · OpenCV · Flask + MJPEG · SQLite (WAL) · Google Sheets API · Hailo-8 NPU
+
+> **Three implementations of the recognition pipeline live side-by-side.** The Python one (`src/`) drives the web app and is what runs in production. The C++ one (`cpp/`) is a parallel port used to A/B latency and demonstrate the no-GIL win. The Hailo one (`hailo/`) targets a Pi 5 + Hailo-8 NPU. `make bench-all` prints all three SUMMARY lines for direct comparison.
+
+Measured on the same Pi 5, same benchmark images (detect + embed, per face):
+
+| Pipeline | Median latency | Jitter | Throughput |
+|----------|---------------:|-------:|-----------:|
+| Python + CPU (4 threads) | 48.08 ms | ±27 ms | ~21 fps |
+| **Hailo-8 NPU** | **5.59 ms** | **±0.29 ms** | **~180 fps** |
+
+That's **8.6× faster with 95× tighter jitter** — the two-orders-of-magnitude jitter win is what makes it truly real-time. Methodology and full tables: [`hailo/README.md`](hailo/README.md); C++ port details: [`cpp/README.md`](cpp/README.md).
 
 ## How it looks
 
@@ -167,3 +184,7 @@ The system detects masks and sunglasses heuristically (eye-region brightness & v
 - **Recognition** does not match an occluded face against the gallery at all — it would be unreliable and could falsely match the wrong employee. The kiosk shows an amber box with the prompt instead of a green tick.
 
 Tunables are in `src/occlusion.py`. See `docs/enrollment.md` for the runtime details.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
